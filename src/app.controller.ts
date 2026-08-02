@@ -8,10 +8,10 @@ export class AppController {
 
   @Get()
   getHello(): string {
-    throw new BaseException({
-      message: '参数校验失败',
-      status: 400,
-    });
+    // throw new BaseException({
+    //   message: '参数校验失败',
+    //   status: 400,
+    // });
     return this.appService.getHello();
   }
 }
