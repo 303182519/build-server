@@ -1,7 +1,8 @@
 import { NestFactory } from '@nestjs/core';
-import { Logger } from '@nestjs/common';
+import { Logger, VersioningType } from '@nestjs/common';
+import { appUse } from './common/use';
 import { AppModule } from './app.module';
-import { getAppConfig } from '@/config/configuration';
+import { getAppConfig } from './config/configuration';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -12,6 +13,14 @@ async function bootstrap() {
 
   // 设置api前缀
   app.setGlobalPrefix(server.apiPrefix);
+
+  // 开启http请求版本
+  // app.enableVersioning({
+  //   type: VersioningType.URI,
+  // });
+
+  // 为整个应用绑定中间件
+  appUse(app);
 
   await app.listen(server.port);
 
