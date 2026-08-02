@@ -1,0 +1,34 @@
+{
+	// 使用 IntelliSense 了解相关属性。 
+	// 悬停以查看现有属性的描述。
+	// 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+	"version": "0.2.0",
+	"configurations": [
+		// 启动终端运行  npm run start:debug
+		// 启动服务 → F5 附加调试
+		{
+			"type": "node",
+			"request": "attach",
+			"name": "Attach Nest Debug",
+			"port": 9229,
+			"sourceMaps": true,
+			"cwd": "${workspaceFolder}",
+			"outFiles": ["${workspaceFolder}/dist/**/*.js"]
+		},
+		{
+      "type": "node",
+      "request": "launch",
+      "name": "NestJS 开发调试",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["start:dev"],
+      "console": "integratedTerminal",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "autoAttachChildProcesses": true,
+      "stopOnEntry": false,
+      "sourceMaps": true,
+      "cwd": "${workspaceFolder}"
+    }
+	]
+}
