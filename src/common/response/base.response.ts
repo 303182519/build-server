@@ -1,16 +1,18 @@
+import { HttpStatus } from '@nestjs/common';
+
 /**
  * 标准返回体
  */
-export interface StandardResponse<T = any> {
-  code: number;
+export interface StandardResponse<T = unknown> {
+  code: HttpStatus;
   data: T;
   message: string;
   timestamp: number;
 }
 
 export function createResponse<T>(
-  code: number,
   data: T,
+  code: HttpStatus = HttpStatus.OK,
   message = 'success',
 ): StandardResponse<T> {
   return {

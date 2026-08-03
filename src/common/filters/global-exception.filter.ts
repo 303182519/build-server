@@ -9,7 +9,7 @@ import {
 import { Request, Response } from 'express';
 import { IsProduction } from '../constants/environment';
 import { BaseException } from '../exceptions/base.exception';
-import { StandardResponse } from '../dto/response.dto';
+import { StandardResponse } from '../response/base.response';
 
 /**
  * TODO: 日志系统代办

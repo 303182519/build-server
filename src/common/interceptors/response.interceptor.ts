@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
-import { createResponse } from '../dto/response.dto';
+import { createResponse } from '../response/base.response';
 import { Response } from 'express';
 /**
  * 响应包装拦截器
@@ -39,7 +39,7 @@ export class ResponseInterceptor<T> implements NestInterceptor {
         ) {
           return data;
         }
-        return createResponse(response.statusCode, data);
+        return createResponse(data, response.statusCode);
       }),
     );
   }
