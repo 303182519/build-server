@@ -8,12 +8,6 @@ generator client {
   output   = "../src/generated/prisma"
 }
 
-// generator docs {
-//   provider = "node node_modules/prisma-docs-generator"
-//   output   = "../src/generated/docs"
-// }
-
 datasource db {
   provider = "mysql"
 }
-

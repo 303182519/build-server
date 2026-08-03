@@ -1,5 +1,3 @@
-// import { TypeOrmModuleOptions } from '@nestjs/typeorm';
-
 export interface ServerConfig {
   port?: number;
   apiPrefix?: string;
@@ -18,6 +16,10 @@ export interface JwtConfig {
   secret?: string;
   accessExpiresIn?: number;
   refreshExpiresIn?: number;
+}
+
+export interface DatabaseConfig {
+  url: string;
 }
 
 export interface SnowflakeConfig {
@@ -45,7 +47,7 @@ export interface ThrottlerConfig {
 export interface AppConfig {
   server?: ServerConfig;
   swagger?: SwaggerConfig;
-  // database?: TypeOrmModuleOptions;
+  database?: DatabaseConfig;
   jwt?: JwtConfig;
   snowflake?: SnowflakeConfig;
   redis?: RedisConfig;

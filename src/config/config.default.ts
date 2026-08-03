@@ -25,16 +25,9 @@ export const defaultConfig = registerAs('default', (): AppConfig => ({
     description: 'The NestJS API description',
     version: '1.0',
   },
-  // database: {
-  //   type: 'postgres',
-  //   host: process.env.DATABASE_HOST || 'localhost',
-  //   port: process.env.DATABASE_PORT || 5432,
-  //   username: process.env.DATABASE_USERNAME || 'postgres',
-  //   password: process.env.DATABASE_PASSWORD || 'postgres',
-  //   database: process.env.DATABASE_NAME || 'first-nest',
-  //   url: process.env.DATABASE_URL,
-  //   synchronize: false,
-  // },
+  database: {
+    url: process.env.DATABASE_URL || '',
+  },
   jwt: {
     secret: process.env.JWT_SECRET || '123456',
     accessExpiresIn: Number(process.env.JWT_ACCESS_EXPIRES_IN) || 3600,
