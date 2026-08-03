@@ -1,8 +1,8 @@
 declare global {
   namespace NodeJS {
     interface ProcessEnv {
+      PORT: number;
       DATABASE_URL: string;
-      DATABASE_SYNCHRONIZE: boolean;
       DEFAULT_ADMIN_USERNAME: string;
       DEFAULT_ADMIN_PASSWORD: string;
       JWT_SECRET: string;

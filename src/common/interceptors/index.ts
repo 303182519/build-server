@@ -9,8 +9,8 @@ import { TimeoutInterceptor } from './timeout.interceptor';
 export const useInterceptors = (app: INestApplication) => {
   app.useGlobalInterceptors(
     new LoggingInterceptor(),
-    new PostResponseInterceptor(),
     new ResponseInterceptor(),
+    new PostResponseInterceptor(),
     // new UserContextInterceptor(),
     // https://docs.nestjs.cn/techniques/serialization
     new ClassSerializerInterceptor(app.get(Reflector)),
