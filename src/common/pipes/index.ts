@@ -13,10 +13,6 @@ export const usePipes = (app: INestApplication) => {
       whitelist: true,
       // 3. 如果前端传递了白名单以外的字段，直接抛出异常（严格模式）
       // forbidNonWhitelisted: true,
-      // 4. 自动移除属性中 undefined 的值
-      transformOptions: {
-        excludeExtraneousValues: true,
-      },
       // 跳过没有验证装饰器的类型（String Number Boolean等基础类型）, 默认是 false
       skipMissingProperties: false,
       // 5. 校验报错信息格式化，统一返回友好错误
