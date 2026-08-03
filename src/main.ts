@@ -3,6 +3,7 @@ import { Logger, VersioningType } from '@nestjs/common';
 import { appUse } from './common/use';
 import { AppModule } from './app.module';
 import { getAppConfig } from './config/configuration';
+import { useSwagger } from './shared/utils/swagger';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -21,6 +22,8 @@ async function bootstrap() {
 
   // 为整个应用绑定中间件
   appUse(app);
+
+  useSwagger(app);
 
   await app.listen(server.port);
 
