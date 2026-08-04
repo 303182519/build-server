@@ -4,7 +4,7 @@ import {
   OnModuleInit,
   OnModuleDestroy,
 } from '@nestjs/common';
-import { PrismaClient, Prisma } from '@/generated/prisma';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { IsProduction } from '@/common/constants/environment';
 
 type LogConfig =
