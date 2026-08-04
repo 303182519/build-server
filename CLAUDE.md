@@ -19,7 +19,7 @@ pnpm run db:deploy      # prisma migrate deploy（生产迁移）
 
 ## Architecture
 
-**技术栈**: NestJS 11 + Prisma 7 (MariaDB/MySQL driver adapter) + Joi 验证 + Swagger
+**技术栈**: NestJS 11 + Prisma 5 (MariaDB/MySQL) + Joi 验证 + Swagger
 
 ### 配置系统
 
@@ -48,7 +48,7 @@ pnpm run db:deploy      # prisma migrate deploy（生产迁移）
 
 ### Database (Prisma)
 
-- `PrismaService extends PrismaClient`，通过 `PrismaMariaDb` driver adapter 连接 MariaDB
+- `PrismaService extends PrismaClient`，直接连接 MariaDB（无需 driver adapter）
 - 数据库连接从 `getConfig(configService).database.url` 读取（即 `DATABASE_URL` 环境变量）
 - Prisma schema 位于 `prisma/schema.prisma`，client 输出到 `src/generated/prisma/`
 - `PrismaModule` 是 `@Global()` 模块，通过 token `'PrismaClient'` 注入

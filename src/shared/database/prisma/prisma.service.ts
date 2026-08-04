@@ -1,30 +1,52 @@
-import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { PrismaClient } from '@/generated/prisma/client';
-import { PrismaMariaDb } from '@prisma/adapter-mariadb';
-import { getConfig } from '@/config/configuration';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+} from '@nestjs/common';
+import { PrismaClient, Prisma } from '@/generated/prisma';
+import { IsProduction } from '@/common/constants/environment';
+
+type LogConfig =
+  | [{ emit: 'event'; level: 'warn' }, { emit: 'event'; level: 'error' }]
+  | ['query', 'info', 'warn', 'error'];
+
+type ClientOptions = Omit<Prisma.PrismaClientOptions, 'log'> & {
+  log: LogConfig;
+};
 
 @Injectable()
 export class PrismaService
-  extends PrismaClient
+  extends PrismaClient<ClientOptions>
   implements OnModuleInit, OnModuleDestroy
 {
-  constructor(configService: ConfigService) {
-    const { database } = getConfig(configService);
+  private readonly logger = new Logger(PrismaService.name);
 
+  constructor() {
     super({
-      log: ['query', 'info', 'warn', 'error'],
-      adapter: new PrismaMariaDb(database.url),
+      log: IsProduction
+        ? [
+            { emit: 'event', level: 'warn' },
+            { emit: 'event', level: 'error' },
+          ]
+        : ['query', 'info', 'warn', 'error'],
     });
   }
 
   async onModuleInit() {
-    // 应用启动主动建立连接（可选；不写则惰性连接，第一次查询才连库）
+    if (IsProduction) {
+      this.$on('warn', (e) => {
+        this.logger.warn(e.message);
+      });
+      this.$on('error', (e) => {
+        this.logger.error(e.message);
+      });
+    }
+
     await this.$connect();
   }
 
   async onModuleDestroy() {
-    // Nest关闭时主动断开连接，释放连接池
     await this.$disconnect();
   }
 }
