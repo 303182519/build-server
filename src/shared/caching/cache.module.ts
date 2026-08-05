@@ -79,6 +79,8 @@ const buildRedisUrl = (redis: {
         return null;
       },
     },
+    CacheService,
+    HashCacheService,
     CacheHealthIndicator,
   ],
   exports: [

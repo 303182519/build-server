@@ -15,13 +15,13 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
-    networks:
-      - my-nest-network
+    # networks:
+    #   - my-nest-network
 
-networks:
-  my-nest-network:
-    external: true
-    name: my-nest-network
+# networks:
+#   my-nest-network:
+#     external: true
+#     name: my-nest-network
 
 volumes:
   redis-data:
