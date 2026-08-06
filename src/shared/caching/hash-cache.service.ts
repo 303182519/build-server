@@ -122,7 +122,7 @@ export class HashCacheService {
    *
    * @example
    * const job = await hashCache.hgetall('build:job:{id=12345}');
-   * // { status: "running", progress: "42", userId: "u_abc" }
+   * // { status: "running", progress: "42" }
    */
   async hgetall(key: string): Promise<Record<string, string>> {
     if (!this.redis) return {};
