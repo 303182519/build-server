@@ -7,10 +7,26 @@ import { REDIS_CLIENT } from './cache.tokens';
  *
  * Redis Hash 可以理解为一个挂在单个 `key` 下的字符串字典：
  * ```
- * key: build:job:12345  ->  { status: "running", progress: "42", userId: "u_abc" }
+ * build:job:{id=12345}  ->  { status: "running", progress: "42", userId: "u_abc" }
  * ```
  * 适合存储"一条逻辑记录的多个字段"：可单字段读写、可整体取、可整体设 TTL，
  * 比把对象 JSON.stringify 进普通 string key 更灵活，更新单字段不会踩到其他字段。
+ *
+ * ╔══════════════════════════════════════════════════════════════╗
+ * ║  Redis Cluster Hash Tag 规范（企业级）                        ║
+ * ╠══════════════════════════════════════════════════════════════╣
+ * ║  使用 {业务标识=值} 格式包裹可变部分，确保同一业务实体的      ║
+ * ║  所有 key 落在同一 Hash Slot，支持 Cluster 下的多 Key 操作。   ║
+ * ║                                                              ║
+ * ║  格式: {domain}:{entity}:{id=value}:{attribute}               ║
+ * ║                                                              ║
+ * ║  ✅ 正确:  user:{id=123}:profile    (user 123 的资料)         ║
+ * ║          user:{id=123}:permissions  (user 123 的权限)         ║
+ * ║          → 两者 slot 相同，支持 MGET / 事务 / Lua              ║
+ * ║                                                              ║
+ * ║  ❌ 错误: user:123:profile  (id 在花括号外，slot 随机)        ║
+ * ║          user:123:permissions (可能在不同节点)                 ║
+ * ╚══════════════════════════════════════════════════════════════╝
  *
  * 降级行为：当 `redis` 为 null（未配置 Redis）时，所有方法静默返回空值
  * （读返回 null、`hincrby` 返回 0、写操作 no-op），不抛错。
@@ -26,8 +42,8 @@ export class HashCacheService {
    * 写入单个 field。`value` 会被 `String(...)` 后存入（Redis 不区分数字/字符串）。
    *
    * @example
-   * await hashCache.hset('build:job:12345', 'status', 'running');
-   * await hashCache.hset('build:job:12345', 'progress', 42); // 存为 "42"
+   * await hashCache.hset('build:job:{id=12345}', 'status', 'running');
+   * await hashCache.hset('build:job:{id=12345}', 'progress', 42); // 存为 "42"
    */
   async hset(
     key: string,
@@ -42,7 +58,7 @@ export class HashCacheService {
    * 读取单个 field。不存在或 Redis 未连接时返回 null。
    *
    * @example
-   * const status = await hashCache.hget('build:job:12345', 'status'); // "running"
+   * const status = await hashCache.hget('build:job:{id=12345}', 'status'); // "running"
    */
   async hget(key: string, field: string): Promise<string | null> {
     if (!this.redis) return null;
@@ -55,7 +71,7 @@ export class HashCacheService {
    *
    * @example
    * const [status, progress] = await hashCache.hmget(
-   *   'build:job:12345',
+   *   'build:job:{id=12345}',
    *   ['status', 'progress'],
    * ); // ["running", "42"]
    */
@@ -70,7 +86,7 @@ export class HashCacheService {
    * 注意：大 Hash（字段极多）调用会一次性拉回全部数据，谨慎用于热路径。
    *
    * @example
-   * const job = await hashCache.hgetall('build:job:12345');
+   * const job = await hashCache.hgetall('build:job:{id=12345}');
    * // { status: "running", progress: "42", userId: "u_abc" }
    */
   async hgetall(key: string): Promise<Record<string, string>> {
@@ -83,7 +99,7 @@ export class HashCacheService {
    * 只删 field，不影响同 key 下的其他 field；要让整个 key 消失请用普通 `DEL key`。
    *
    * @example
-   * await hashCache.hdel('build:job:12345', 'tempLog', 'debugFlag');
+   * await hashCache.hdel('build:job:{id=12345}', 'tempLog', 'debugFlag');
    */
   async hdel(key: string, ...fields: string[]): Promise<number> {
     if (fields.length === 0) return 0;
@@ -96,8 +112,8 @@ export class HashCacheService {
    * 是实现并发安全的"进度计数 / 计数器"的首选方式，禁止用"读出来 +N 再写回"替代。
    *
    * @example
-   * await hashCache.hincrby('build:job:12345', 'progress', 5);  // 42 -> 47
-   * await hashCache.hincrby('build:job:12345', 'progress', -1); // 47 -> 46
+   * await hashCache.hincrby('build:job:{id=12345}', 'progress', 5);  // 42 -> 47
+   * await hashCache.hincrby('build:job:{id=12345}', 'progress', -1); // 47 -> 46
    */
   async hincrby(
     key: string,
@@ -114,7 +130,7 @@ export class HashCacheService {
    * 续期：再次调用 `expire` 即可重置倒计时。
    *
    * @example
-   * await hashCache.expire('build:job:12345', 7 * 24 * 3600); // 7 天后自动清理
+   * await hashCache.expire('build:job:{id=12345}', 7 * 24 * 3600); // 7 天后自动清理
    */
   async expire(key: string, ttlSeconds: number): Promise<void> {
     if (!this.redis) return;
