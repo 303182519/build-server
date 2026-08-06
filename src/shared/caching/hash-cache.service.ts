@@ -39,11 +39,11 @@ export class HashCacheService {
   ) {}
 
   /**
-   * 写入单个 field。`value` 会被 `String(...)` 后存入（Redis 不区分数字/字符串）。
+   * 写入单个 field。Redis 协议层自动处理 number/string 类型转换。
    *
    * @example
    * await hashCache.hset('build:job:{id=12345}', 'status', 'running');
-   * await hashCache.hset('build:job:{id=12345}', 'progress', 42); // 存为 "42"
+   * await hashCache.hset('build:job:{id=12345}', 'progress', 42);
    */
   async hset(
     key: string,
@@ -51,7 +51,42 @@ export class HashCacheService {
     value: string | number,
   ): Promise<void> {
     if (!this.redis) return;
-    await this.redis.hSet(key, field, String(value));
+    await this.redis.hSet(key, field, value);
+  }
+
+  /**
+   * 批量写入多个 field。一次往返省网络，适合初始化或整体更新整条 Hash。
+   *
+   * @param key Hash key（建议带 Hash Tag，如 `user:{id=123}:profile`）
+   * @param mapping field-value 映射，value 支持 string / number
+   * @param expire TTL 秒数，传入后通过 HSETEX 一次写入+设过期（Redis 6.2+）
+   *
+   * @example
+   * // 只写数据
+   * await hashCache.hmset('build:job:{id=12345}', {
+   *   status: 'running',
+   *   progress: 42,
+   * });
+   *
+   * // 写入 + 7 天过期（一次往返）
+   * await hashCache.hmset('build:job:{id=12345}', {
+   *   status: 'running',
+   *   progress: 42,
+   * }, 7 * 24 * 3600);
+   */
+  async hmset(
+    key: string,
+    mapping: Record<string, string | number>,
+    expire?: number,
+  ): Promise<void> {
+    if (!this.redis) return;
+    if (expire !== undefined) {
+      await this.redis.hSetEx(key, mapping, {
+        expiration: { type: 'EX', value: expire },
+      });
+    } else {
+      await this.redis.hSet(key, mapping);
+    }
   }
 
   /**
