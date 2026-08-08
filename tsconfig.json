@@ -1,19 +1,29 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
+    // tsc 依赖这个执行编译, 与pkg.json的type: 'node' 一起的
+    // 假如是"NodeNext", tsc 会编译成esm模块，
+    // moduleResolution 与 module: "NodeNext" 是一起配置的；控制 TS「类型检查时怎么找 import 的文件」（解析源码里的 import 路径，找.ts、.d.ts）
+    // "moduleResolution": "NodeNext", 
+    "module": "commonjs", 
     "declaration": true,
     "removeComments": true,
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
-    "allowSyntheticDefaultImports": true,
+    
+    // CommonJS 和 ES Module 互相导入的兼容问题
     "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+
+    // 强制文件名大小写保持一致，规避跨平台 bug
+    "forceConsistentCasingInFileNames": true,
+
     "target": "ES2023",
     "sourceMap": true,
     "outDir": "./dist",
     "incremental": true,
     "skipLibCheck": true,
     "strictNullChecks": true,
-    "forceConsistentCasingInFileNames": true,
+    
     "noImplicitAny": false,
     "strictBindCallApply": false,
     "noFallthroughCasesInSwitch": false,
