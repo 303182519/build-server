@@ -1,7 +1,7 @@
-// import { useRequestUser } from '@/common/context/user-context';
+import { useRequestUser } from '@/common/context/user-context';
 import { Injectable } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
-// import type { AuthRequest } from '@/types/express';
+import type { AuthRequest } from '@/types/express';
 
 /**
  * 自定义限流守卫。
@@ -11,22 +11,22 @@ import { ThrottlerGuard } from '@nestjs/throttler';
  */
 @Injectable()
 export class AppThrottlerGuard extends ThrottlerGuard {
-  protected getTracker(req: Record<string, any>): Promise<string> {
-    // const userId = this.getUserId(req);
+  protected getTracker(req: AuthRequest): Promise<string> {
+    const userId = this.getUserId(req);
 
-    // if (userId) {
-    //   return Promise.resolve(`user:${userId}`);
-    // }
+    if (userId) {
+      return Promise.resolve(`user:${userId}`);
+    }
     console.log('ip', req.ip);
     console.log('ips[0]', req.ips);
     return Promise.resolve(`ip:${req.ips[0] || req.ip}`);
   }
 
-  // private getUserId(req: AuthRequest): string | undefined {
-  //   try {
-  //     return useRequestUser().id;
-  //   } catch {
-  //     return req.user?.id;
-  //   }
-  // }
+  private getUserId(req: AuthRequest): string | undefined {
+    try {
+      return useRequestUser().id;
+    } catch {
+      return req.user?.id;
+    }
+  }
 }

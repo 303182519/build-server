@@ -14,12 +14,35 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum SpecialRolesEnum {
+  SuperAdmin @map("super_admin")
+  Developer  @map("developer")
+}
+
 model User {
-  id        Int      @id @default(autoincrement())
-  username  String   @unique
-  age       Int?
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id           String             @id @default(uuid())
+  username     String             @unique
+  email        String?            @unique
+  password     String
+  nickname     String?
+  avatar       String?
+  isActive     Boolean            @default(true) @map("is_active")
+  createdAt    DateTime           @default(now()) @map("created_at")
+  updatedAt    DateTime           @updatedAt @map("updated_at")
+  deletedAt    DateTime?          @map("deleted_at")
+
+  specialRoles UserSpecialRole[]
 
   @@map("users")
+}
+
+model UserSpecialRole {
+  id     Int              @id @default(autoincrement())
+  userId String
+  role   SpecialRolesEnum
+
+  user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role])
+  @@map("user_special_roles")
 }
