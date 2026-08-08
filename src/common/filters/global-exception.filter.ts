@@ -18,6 +18,52 @@ import { StandardResponse } from '../response/base.response';
  * 接口权限控制仅限 developer Role 使用
  */
 
+/** 匹配 JSON 解析错误信息（V8 的 JSON.parse 抛出的 SyntaxError 文案） */
+const JSON_PARSE_ERROR_REGEX = /in JSON at position|end of JSON input/i;
+
+/**
+ * 判断异常是否为请求体 JSON 解析错误
+ *
+ * body-parser 解析失败时抛出的异常可能是以下几种形态：
+ * 1. http-errors 的 BadRequest（带 type: 'entity.parse.failed'）
+ * 2. 被 NestJS 包装后的 HttpException（response.message 含解析错误信息）
+ * 3. 原生 SyntaxError（message 含 "in JSON at position" 等）
+ */
+function isJsonParseError(exception: unknown): boolean {
+  if (!(exception instanceof Error)) return false;
+
+  // body-parser 标识
+  if ((exception as { type?: string }).type === 'entity.parse.failed') {
+    return true;
+  }
+
+  // 检查异常自身的 message（覆盖原生 SyntaxError / http-errors）
+  if (JSON_PARSE_ERROR_REGEX.test(exception.message)) {
+    return true;
+  }
+
+  // 检查 HttpException 包装后的 response.message
+  if (exception instanceof HttpException) {
+    const exceptionResponse = exception.getResponse();
+    if (typeof exceptionResponse === 'object' && exceptionResponse !== null) {
+      const msg = (exceptionResponse as { message?: unknown }).message;
+      if (typeof msg === 'string' && JSON_PARSE_ERROR_REGEX.test(msg)) {
+        return true;
+      }
+      if (
+        Array.isArray(msg) &&
+        msg.some(
+          (m) => typeof m === 'string' && JSON_PARSE_ERROR_REGEX.test(m),
+        )
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 /**
  * 全局异常过滤器
  * 处理所有未捕获的异常，并将其转换为统一的响应格式
@@ -37,7 +83,11 @@ export class GlobalExceptionsFilter implements ExceptionFilter {
       message: '服务器繁忙，请稍后重试',
     };
 
-    if (exception instanceof BaseException) {
+    // 请求体 JSON 语法错误：返回友好提示，避免把 V8 解析细节（如 "Expected ... in JSON at position N"）直接暴露给客户端
+    if (isJsonParseError(exception)) {
+      responseBody.code = HttpStatus.BAD_REQUEST;
+      responseBody.message = '请求JSON格式错误，请检查请求体语法';
+    } else if (exception instanceof BaseException) {
       const exceptionResponse = exception.getResponse() as {
         message: string;
         code: string;
@@ -48,16 +98,20 @@ export class GlobalExceptionsFilter implements ExceptionFilter {
     } else if (exception instanceof HttpException) {
       const exceptionResponse = exception.getResponse();
       responseBody.code = exception.getStatus();
-
       if (typeof exceptionResponse === 'object') {
         const exceptionObj = exceptionResponse as {
-          message: string | string[];
-          error: string;
+          message: string;
+          error?: string;
+          data?: unknown;
         };
+        // 优先使用自定义异常中传入的 data（如校验错误的 field+message 数组）
+        if (exceptionObj.data !== undefined) {
+          (responseBody as StandardResponse<unknown>).data = exceptionObj.data;
+        }
         // 管道校验异常（class-validator）会返回 message 数组
-        responseBody.message = Array.isArray(exceptionObj.message)
-          ? exceptionObj.message.join(', ')
-          : exceptionObj.message;
+        if (exceptionObj.message !== undefined) {
+          responseBody.message = exceptionObj.message
+        }
       } else {
         responseBody.message = exceptionResponse;
       }
