@@ -35,7 +35,6 @@ export class GlobalExceptionsFilter implements ExceptionFilter {
       code: HttpStatus.INTERNAL_SERVER_ERROR,
       data: null,
       message: '服务器繁忙，请稍后重试',
-      timestamp: Date.now(),
     };
 
     if (exception instanceof BaseException) {

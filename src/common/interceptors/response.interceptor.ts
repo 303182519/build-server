@@ -10,7 +10,7 @@ import { createResponse } from '../response/base.response';
 import { Response } from 'express';
 /**
  * 响应包装拦截器
- * 将所有成功响应包装为统一格式: { code, data, message, timestamp }
+ * 将所有成功响应包装为统一格式: { code, data, message }
  */
 @Injectable()
 export class ResponseInterceptor<T> implements NestInterceptor {
@@ -24,19 +24,13 @@ export class ResponseInterceptor<T> implements NestInterceptor {
         code: number;
         data: unknown;
         msg: string;
-        timestamp: number;
       }>;
     }
 
     return next.handle().pipe(
       map((data) => {
         // 已是标准格式则透传，避免重复包装
-        if (
-          data &&
-          typeof data === 'object' &&
-          'code' in data &&
-          'timestamp' in data
-        ) {
+        if (data && typeof data === 'object' && 'code' in data) {
           return data;
         }
         return createResponse(data, response.statusCode);

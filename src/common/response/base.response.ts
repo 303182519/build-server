@@ -7,7 +7,6 @@ export interface StandardResponse<T = unknown> {
   code: HttpStatus;
   data: T;
   message: string;
-  timestamp: number;
 }
 
 export function createResponse<T>(
@@ -19,6 +18,5 @@ export function createResponse<T>(
     code,
     data,
     message,
-    timestamp: Date.now(),
   };
 }
