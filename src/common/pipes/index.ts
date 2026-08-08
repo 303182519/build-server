@@ -17,15 +17,13 @@ export const usePipes = (app: INestApplication) => {
       skipMissingProperties: false,
       // 5. 校验报错信息格式化，统一返回友好错误
       exceptionFactory: (validationErrors) => {
-        const messages = validationErrors.map((err) => {
-          return Object.values(err.constraints!).join(';');
+        const messages = validationErrors.flatMap((err) => {
+          return Object.entries(err.constraints!).map(([, message]) => ({
+            field: err.property,
+            message,
+          }));
         });
-        // messages 格式化为数组
-        /* [
-              '名称 必须是字符串；名称 长度必须在 1~20 之间',
-              '年龄 必须是整数；年龄 不能小于 0',
-              '品种 必须是字符串'
-            ] */
+
         return new BadRequestException({
           message: '参数校验失败',
           data: messages,
