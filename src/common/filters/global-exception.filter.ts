@@ -52,9 +52,7 @@ function isJsonParseError(exception: unknown): boolean {
       }
       if (
         Array.isArray(msg) &&
-        msg.some(
-          (m) => typeof m === 'string' && JSON_PARSE_ERROR_REGEX.test(m),
-        )
+        msg.some((m) => typeof m === 'string' && JSON_PARSE_ERROR_REGEX.test(m))
       ) {
         return true;
       }
@@ -100,7 +98,7 @@ export class GlobalExceptionsFilter implements ExceptionFilter {
       responseBody.code = exception.getStatus();
       if (typeof exceptionResponse === 'object') {
         const exceptionObj = exceptionResponse as {
-          message: string;
+          message?: string;
           error?: string;
           data?: unknown;
         };
@@ -110,7 +108,7 @@ export class GlobalExceptionsFilter implements ExceptionFilter {
         }
         // 管道校验异常（class-validator）会返回 message 数组
         if (exceptionObj.message !== undefined) {
-          responseBody.message = exceptionObj.message
+          responseBody.message = exceptionObj.message;
         }
       } else {
         responseBody.message = exceptionResponse;
