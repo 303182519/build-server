@@ -9,7 +9,7 @@ import { join } from 'path';
       // rootPath: join(__dirname, '..', 'client'),
       // 使用 process.cwd() 获取当前工作目录路径
       rootPath: join(process.cwd(), 'client'),
-      // 路径匹配问题：https://github.com/pillarjs/path-to-regexp#errors
+      // 把 SPA 回退的范围从"所有 GET"收窄成"除了 /api/ 以外的 GET"。
       renderPath: /^(?!\/api\/).*/,
       serveStaticOptions: {
         cacheControl: true,
