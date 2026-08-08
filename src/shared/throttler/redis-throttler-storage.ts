@@ -14,13 +14,17 @@ interface ThrottlerStorageRecord {
  * 基于 Redis 的限流存储实现。
  *
  * 使用 Redis INCR + EXPIRE 实现固定窗口计数器：
- * - Key: throttle:{key}
+ * - Key: throttle:{name=<throttlerName>:id=<key>}
  * - Value: 请求次数（整数）
  * - TTL: 窗口时长（毫秒）
  *
  * 阻塞状态使用单独的 Key：
- * - Key: throttle:block:{key}
+ * - Key: throttle:block:{name=<throttlerName>:id=<key>}
  * - TTL: 阻塞时长（毫秒）
+ *
+ * Hash Tag 说明：业务实体 (throttlerName, key) 整体包裹在 {} 中，
+ * 确保同一限流实体的计数 key 与阻塞 key 落在同一 Hash Slot，
+ * 支持 Redis Cluster 下的多 Key 操作（MGET / 事务 / Lua）。
  */
 export class RedisThrottlerStorage implements ThrottlerStorage {
   private readonly logger = new Logger(RedisThrottlerStorage.name);
@@ -48,8 +52,10 @@ export class RedisThrottlerStorage implements ThrottlerStorage {
       };
     }
 
-    const throttleKey = `throttle:${throttlerName}:${key}`;
-    const blockKey = `throttle:block:${throttlerName}:${key}`;
+    // 使用 Hash Tag 包裹业务实体 (throttlerName, key)，确保计数 key 与阻塞 key
+    // 落在同一 Hash Slot，符合 Redis Cluster 多 Key 操作规范。
+    const throttleKey = `throttle:{name=${throttlerName}:id=${key}}`;
+    const blockKey = `throttle:block:{name=${throttlerName}:id=${key}}`;
 
     try {
       // 检查是否处于阻塞状态， 获取 key 的剩余过期时间，返回单位是毫秒
