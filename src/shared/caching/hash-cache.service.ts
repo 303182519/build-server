@@ -7,7 +7,7 @@ import { REDIS_CLIENT } from './cache.tokens';
  *
  * Redis Hash 可以理解为一个挂在单个 `key` 下的字符串字典：
  * ```
- * build:job:{id=12345}  ->  { status: "running", progress: "42", userId: "u_abc" }
+ * build:job:12345  ->  { status: "running", progress: "42", userId: "u_abc" }
  * ```
  * 适合存储"一条逻辑记录的多个字段"：可单字段读写、可整体取、可整体设 TTL，
  * 比把对象 JSON.stringify 进普通 string key 更灵活，更新单字段不会踩到其他字段。
@@ -15,17 +15,21 @@ import { REDIS_CLIENT } from './cache.tokens';
  * ╔══════════════════════════════════════════════════════════════╗
  * ║  Redis Cluster Hash Tag 规范（企业级）                        ║
  * ╠══════════════════════════════════════════════════════════════╣
- * ║  使用 {业务标识=值} 格式包裹可变部分，确保同一业务实体的      ║
- * ║  所有 key 落在同一 Hash Slot，支持 Cluster 下的多 Key 操作。   ║
+ * ║  仅当需要多 Key 批量操作（MGET / 事务 / Lua）时，才用         ║
+ * ║  {业务域:业务id} 把同一实体的多个 key 聚到同一 Hash Slot。    ║
+ * ║  单 key 场景（如本服务的单个 Hash）不要加 tag，让其自然散列。  ║
  * ║                                                              ║
- * ║  格式: {domain}:{entity}:{id=value}:{attribute}               ║
+ * ║  通用命名: {业务域}:{模块}:{资源类型}:{业务id}[:子标识]        ║
+ * ║  Tag 格式: {业务域:业务id}:属性   （冒号分隔，全小写）        ║
  * ║                                                              ║
- * ║  ✅ 正确:  user:{id=123}:profile    (user 123 的资料)         ║
- * ║          user:{id=123}:permissions  (user 123 的权限)         ║
+ * ║  ✅ 正确:  {user:123}:profile       (user 123 的资料)         ║
+ * ║          {user:123}:permissions     (user 123 的权限)         ║
  * ║          → 两者 slot 相同，支持 MGET / 事务 / Lua              ║
+ * ║          build:job:12345             (单 Hash，无 tag，自然散列)║
  * ║                                                              ║
- * ║  ❌ 错误: user:123:profile  (id 在花括号外，slot 随机)        ║
- * ║          user:123:permissions (可能在不同节点)                 ║
+ * ║  ❌ 错误: user:{id=123}:profile  (用 = 分隔，tag 仅含 id)     ║
+ * ║          {all}:user:123          (全局共用 tag，槽倾斜)        ║
+ * ║          user:123:expire_30d     (过期写进 key 名)             ║
  * ╚══════════════════════════════════════════════════════════════╝
  *
  * 降级行为：当 `redis` 为 null（未配置 Redis）时，所有方法静默返回空值
@@ -42,8 +46,8 @@ export class HashCacheService {
    * 写入单个 field。Redis 协议层自动处理 number/string 类型转换。
    *
    * @example
-   * await hashCache.hset('build:job:{id=12345}', 'status', 'running');
-   * await hashCache.hset('build:job:{id=12345}', 'progress', 42);
+   * await hashCache.hset('build:job:12345', 'status', 'running');
+   * await hashCache.hset('build:job:12345', 'progress', 42);
    */
   async hset(
     key: string,
@@ -57,19 +61,19 @@ export class HashCacheService {
   /**
    * 批量写入多个 field。一次往返省网络，适合初始化或整体更新整条 Hash。
    *
-   * @param key Hash key（建议带 Hash Tag，如 `user:{id=123}:profile`）
+   * @param key Hash key（多 key 批量操作时带 Hash Tag，如 `{user:123}:profile`；单 key 无需 tag，如 `build:job:12345`）
    * @param mapping field-value 映射，value 支持 string / number
    * @param expire TTL 秒数，传入后通过 HSETEX 一次写入+设过期（Redis 6.2+）
    *
    * @example
    * // 只写数据
-   * await hashCache.hmset('build:job:{id=12345}', {
+   * await hashCache.hmset('build:job:12345', {
    *   status: 'running',
    *   progress: 42,
    * });
    *
    * // 写入 + 7 天过期（一次往返）
-   * await hashCache.hmset('build:job:{id=12345}', {
+   * await hashCache.hmset('build:job:12345', {
    *   status: 'running',
    *   progress: 42,
    * }, 7 * 24 * 3600);
@@ -93,7 +97,7 @@ export class HashCacheService {
    * 读取单个 field。不存在或 Redis 未连接时返回 null。
    *
    * @example
-   * const status = await hashCache.hget('build:job:{id=12345}', 'status'); // "running"
+   * const status = await hashCache.hget('build:job:12345', 'status'); // "running"
    */
   async hget(key: string, field: string): Promise<string | null> {
     if (!this.redis) return null;
@@ -106,7 +110,7 @@ export class HashCacheService {
    *
    * @example
    * const [status, progress] = await hashCache.hmget(
-   *   'build:job:{id=12345}',
+   *   'build:job:12345',
    *   ['status', 'progress'],
    * ); // ["running", "42"]
    */
@@ -121,7 +125,7 @@ export class HashCacheService {
    * 注意：大 Hash（字段极多）调用会一次性拉回全部数据，谨慎用于热路径。
    *
    * @example
-   * const job = await hashCache.hgetall('build:job:{id=12345}');
+   * const job = await hashCache.hgetall('build:job:12345');
    * // { status: "running", progress: "42" }
    */
   async hgetall(key: string): Promise<Record<string, string>> {
@@ -134,7 +138,7 @@ export class HashCacheService {
    * 只删 field，不影响同 key 下的其他 field；要让整个 key 消失请用普通 `DEL key`。
    *
    * @example
-   * await hashCache.hdel('build:job:{id=12345}', 'tempLog', 'debugFlag');
+   * await hashCache.hdel('build:job:12345', 'tempLog', 'debugFlag');
    */
   async hdel(key: string, ...fields: string[]): Promise<number> {
     if (fields.length === 0) return 0;
@@ -147,8 +151,8 @@ export class HashCacheService {
    * 是实现并发安全的"进度计数 / 计数器"的首选方式，禁止用"读出来 +N 再写回"替代。
    *
    * @example
-   * await hashCache.hincrby('build:job:{id=12345}', 'progress', 5);  // 42 -> 47
-   * await hashCache.hincrby('build:job:{id=12345}', 'progress', -1); // 47 -> 46
+   * await hashCache.hincrby('build:job:12345', 'progress', 5);  // 42 -> 47
+   * await hashCache.hincrby('build:job:12345', 'progress', -1); // 47 -> 46
    */
   async hincrby(
     key: string,
@@ -165,7 +169,7 @@ export class HashCacheService {
    * 续期：再次调用 `expire` 即可重置倒计时。
    *
    * @example
-   * await hashCache.expire('build:job:{id=12345}', 7 * 24 * 3600); // 7 天后自动清理
+   * await hashCache.expire('build:job:12345', 7 * 24 * 3600); // 7 天后自动清理
    */
   async expire(key: string, ttlSeconds: number): Promise<void> {
     if (!this.redis) return;
