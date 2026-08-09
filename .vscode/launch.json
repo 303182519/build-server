@@ -16,19 +16,19 @@
 			"outFiles": ["${workspaceFolder}/dist/**/*.js"]
 		},
 		{
-      "type": "node",
-      "request": "launch",
-      "name": "NestJS 开发调试",
-      "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["start:dev"],
-      "console": "integratedTerminal",
-      "env": {
-        "NODE_ENV": "development"
-      },
-      "autoAttachChildProcesses": true,
-      "stopOnEntry": false,
-      "sourceMaps": true,
-      "cwd": "${workspaceFolder}"
-    }
+			"type": "node",
+			"request": "launch",
+			"name": "NestJS 开发调试",
+			"runtimeExecutable": "pnpm",
+			"runtimeArgs": ["start:dev"],
+			"console": "integratedTerminal",
+			"env": {
+				"NODE_ENV": "development"
+			},
+			"autoAttachChildProcesses": true,
+			"stopOnEntry": false,
+			"sourceMaps": true,
+			"cwd": "${workspaceFolder}"
+		}
 	]
 }
