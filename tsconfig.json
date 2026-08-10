@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    // tsc 依赖这个执行编译, 与pkg.json的type: 'node' 一起的
+    // tsc 依赖module属性这个执行编译, 与pkg.json的type: 'node' 一起的
     // 假如是"NodeNext", tsc 会编译成esm模块，
     // moduleResolution 与 module: "NodeNext" 是一起配置的；控制 TS「类型检查时怎么找 import 的文件」（解析源码里的 import 路径，找.ts、.d.ts）
     // "moduleResolution": "NodeNext", 
