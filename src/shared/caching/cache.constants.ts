@@ -19,7 +19,6 @@ export const CacheKeys = {
   ROLE_TREE: (roleId: string | number) => `roles:tree:${roleId}`,
   PERMISSION_BY_USER: (userId: string | number) => `permissions:user:${userId}`,
 
-
   AUTH_REFRESH_TOKEN: (token: string) =>
     `auth:refresh:${hashCacheToken(token)}`,
 } as const;

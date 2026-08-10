@@ -71,9 +71,9 @@ const buildRedisUrl = (redis: {
       inject: [CACHE_MANAGER],
       useFactory: (cache: Cache) => {
         for (const keyv of cache.stores) {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           const store = keyv.store;
-          if (store instanceof KeyvRedis)
-            return store.client;
+          if (store instanceof KeyvRedis) return store.client;
         }
 
         return null;
@@ -83,11 +83,7 @@ const buildRedisUrl = (redis: {
     HashCacheService,
     CacheHealthIndicator,
   ],
-  exports: [
-    CacheService,
-    HashCacheService,
-    REDIS_CLIENT,
-  ],
+  exports: [CacheService, HashCacheService, REDIS_CLIENT],
 })
 export class RedisCacheModule implements OnApplicationBootstrap {
   private readonly logger = new Logger(RedisCacheModule.name);
