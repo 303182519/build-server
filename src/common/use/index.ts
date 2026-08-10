@@ -1,7 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { useFilters } from '../filters';
 import { useInterceptors } from '../interceptors';
-// import { useMiddleware } from '../middleware';
+import { useMiddleware } from '../middleware';
 import { usePipes } from '../pipes';
 
 export const appUse = (app: INestApplication) => {
@@ -12,7 +12,7 @@ export const appUse = (app: INestApplication) => {
   useInterceptors(app);
 
   // 注册全局中间件
-  //   useMiddleware(app);
+  useMiddleware(app);
 
   // 注册全局管道
   usePipes(app);
