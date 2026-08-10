@@ -17,6 +17,7 @@ export class ValidationPipe<T> implements PipeTransform<T> {
       return value;
     }
 
+    // plainToInstance(目标类, 普通对象)：把一个普通 JSON 对象，转换成目标类的实例对象。
     const object = plainToInstance(metatype, value) as object;
     const errors = await validate(object);
 
