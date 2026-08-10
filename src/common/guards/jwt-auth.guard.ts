@@ -16,17 +16,17 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   }
 
   canActivate(
-    context: ExecutionContext,
+    context: ExecutionContext, // https://docs.nestjs.cn/fundamentals/execution-context#executioncontext-%E7%B1%BB
   ): boolean | Promise<boolean> | Observable<boolean> {
     // 跳过 WebSocket 上下文，由 WsJwtGuard 处理
     if (context.getType() === 'ws') {
       return true;
     }
 
-    const jwtMeta = this.reflector.get<boolean>(
-      JWT_META_KEY,
+    const jwtMeta = this.reflector.getAllAndOverride<boolean>(JWT_META_KEY, [
       context.getHandler(),
-    );
+      context.getClass(),
+    ]);
 
     if (jwtMeta) {
       return true;
