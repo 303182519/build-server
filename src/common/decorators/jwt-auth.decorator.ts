@@ -3,7 +3,7 @@ import {
   ExecutionContext,
   SetMetadata,
 } from '@nestjs/common';
-import { Request } from 'express';
+import type { Request } from 'express';
 
 /**
  * 访问权限的元数据的key

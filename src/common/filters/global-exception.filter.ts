@@ -92,12 +92,14 @@ export class GlobalExceptionsFilter implements ExceptionFilter {
       responseBody.message = '请求JSON格式错误，请检查请求体语法';
     } else if (exception instanceof BaseException) {
       const exceptionResponse = exception.getResponse() as {
-        message: string;
+        message: string | string[];
         code: string;
       };
 
       responseBody.statusCode = exception.getStatus();
-      responseBody.message = exceptionResponse.message;
+      responseBody.message = Array.isArray(exceptionResponse.message)
+          ? exceptionResponse.message.join(', ')
+          : exceptionResponse.message;
       responseBody.code = exceptionResponse.code || exception.name;
 
     } else if (exception instanceof HttpException) {

@@ -11,6 +11,7 @@ import { Response } from 'express';
 /**
  * 响应包装拦截器
  * 将所有成功响应包装为统一格式: { code, data, message }
+ * 错误路径不会经过 Interceptor 的 after 钩子，所以错误响应的统一格式由 GlobalExceptionsFilter 负责。
  */
 @Injectable()
 export class ResponseInterceptor<T> implements NestInterceptor {

@@ -16,7 +16,7 @@ export const defaultConfig = registerAs('default', (): AppConfig => ({
     port: process.env.PORT || 3000,
     apiPrefix: 'api',
     // 服务超时时间，单位：秒
-    timeout: 60,
+    timeout: 10,
   },
   swagger: {
     enabled: process.env.SWAGGER_OPEN || true,

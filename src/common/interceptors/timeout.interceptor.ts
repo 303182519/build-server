@@ -1,22 +1,22 @@
-import { getAppConfig } from '@/config/configuration';
+import { getConfig } from '@/config/configuration';
 import {
   CallHandler,
   ExecutionContext,
   GatewayTimeoutException,
   HttpStatus,
-  INestApplication,
   Injectable,
   NestInterceptor,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Observable, throwError, TimeoutError } from 'rxjs';
 import { catchError, timeout } from 'rxjs/operators';
 
 @Injectable()
 export class TimeoutInterceptor implements NestInterceptor {
-  constructor(private readonly app: INestApplication) {}
+  constructor(private readonly configService: ConfigService) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
-    const { server } = getAppConfig(this.app);
+    const { server } = getConfig(this.configService);
 
     return next.handle().pipe(
       timeout(server.timeout * 1000),
