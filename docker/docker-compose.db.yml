@@ -1,0 +1,24 @@
+name: my-first-nest
+# 用于启动数据库容器
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: my-first-nest-db
+    restart: on-failure:5
+    ports:
+      - '3306:3306'
+    environment:
+      MYSQL_ROOT_PASSWORD: '123456'
+      MYSQL_DATABASE: mydb
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - my-nest-network
+
+networks:
+  my-nest-network:
+    external: true
+    name: my-nest-network
+
+volumes:
+  mysql-data:
