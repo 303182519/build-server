@@ -79,12 +79,11 @@ export class GlobalExceptionsFilter implements ExceptionFilter {
       statusCode: number; // http状态码
       code: string; // 自定义错误码
       message: string;
-      data: unknown;
+      errors?: unknown;
     } = {
       statusCode: HttpStatus.INTERNAL_SERVER_ERROR, 
       code: 'INTERNAL_SERVER_ERROR', 
       message: '服务器繁忙，请稍后重试',
-      data: null,
     };
 
     // 请求体 JSON 语法错误：返回友好提示，避免把 V8 解析细节（如 "Expected ... in JSON at position N"）直接暴露给客户端
@@ -108,11 +107,11 @@ export class GlobalExceptionsFilter implements ExceptionFilter {
         const exceptionObj = exceptionResponse as {
           message: string;
           code: string;
-          data?: unknown;
+          errors?: unknown;
         };
         // 优先使用自定义异常中传入的 data（如校验错误的 field+message 数组）
-        if (exceptionObj.data !== undefined) {
-          responseBody.data = exceptionObj.data;
+        if (exceptionObj.errors !== undefined) {
+          responseBody.errors = exceptionObj.errors;
         }
 
         responseBody.message = exceptionObj.message;

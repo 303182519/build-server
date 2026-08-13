@@ -18,14 +18,15 @@ export const usePipes = (app: INestApplication) => {
       },
       // 校验报错信息格式化，统一返回友好错误
       exceptionFactory: (validationErrors) => {
-        const messages = validationErrors.map((err) => ({
+        const errors = validationErrors.map((err) => ({
           field: err.property,
           message: Object.values(err.constraints ?? {}),
         }));
 
         return new BadRequestException({
           message: '参数校验失败',
-          data: messages,
+          errors: errors,
+          code: 'VALIDATION_ERROR',
         });
       },
     }),
