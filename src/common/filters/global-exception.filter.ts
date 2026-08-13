@@ -9,7 +9,7 @@ import {
 import { Request, Response } from 'express';
 import { IsProduction } from '../constants/environment';
 import { BaseException } from '../exceptions/base.exception';
-import { StandardResponse } from '../response/base.response';
+
 
 /**
  * TODO: 日志系统代办
@@ -75,15 +75,21 @@ export class GlobalExceptionsFilter implements ExceptionFilter {
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
-    const responseBody: StandardResponse<null> = {
-      code: HttpStatus.INTERNAL_SERVER_ERROR,
-      data: null,
+    const responseBody: {
+      statusCode: number; // http状态码
+      code: string; // 自定义错误码
+      message: string;
+      data: unknown;
+    } = {
+      statusCode: HttpStatus.INTERNAL_SERVER_ERROR, 
+      code: 'INTERNAL_SERVER_ERROR', 
       message: '服务器繁忙，请稍后重试',
+      data: null,
     };
 
     // 请求体 JSON 语法错误：返回友好提示，避免把 V8 解析细节（如 "Expected ... in JSON at position N"）直接暴露给客户端
     if (isJsonParseError(exception)) {
-      responseBody.code = HttpStatus.BAD_REQUEST;
+      responseBody.statusCode = HttpStatus.BAD_REQUEST;
       responseBody.message = '请求JSON格式错误，请检查请求体语法';
     } else if (exception instanceof BaseException) {
       const exceptionResponse = exception.getResponse() as {
@@ -91,32 +97,35 @@ export class GlobalExceptionsFilter implements ExceptionFilter {
         code: string;
       };
 
-      responseBody.code = exception.getStatus();
+      responseBody.statusCode = exception.getStatus();
       responseBody.message = exceptionResponse.message;
+      responseBody.code = exceptionResponse.code || exception.name;
+
     } else if (exception instanceof HttpException) {
       const exceptionResponse = exception.getResponse();
-      responseBody.code = exception.getStatus();
+      responseBody.statusCode = exception.getStatus();
       if (typeof exceptionResponse === 'object') {
         const exceptionObj = exceptionResponse as {
-          message?: string;
-          error?: string;
+          message: string;
+          code: string;
           data?: unknown;
         };
         // 优先使用自定义异常中传入的 data（如校验错误的 field+message 数组）
         if (exceptionObj.data !== undefined) {
-          (responseBody as StandardResponse<unknown>).data = exceptionObj.data;
+          responseBody.data = exceptionObj.data;
         }
-        // 管道校验异常（class-validator）会返回 message 数组
-        if (exceptionObj.message !== undefined) {
-          responseBody.message = exceptionObj.message;
-        }
+
+        responseBody.message = exceptionObj.message;
+        responseBody.code = exceptionObj.code;
       } else {
         responseBody.message = exceptionResponse;
+        responseBody.code = exception.name;
       }
     } else if (exception instanceof Error) {
       if (!IsProduction) {
         responseBody.message = exception.message;
       }
+      responseBody.code = exception.name;
     }
 
     // 记录错误日志
@@ -125,6 +134,6 @@ export class GlobalExceptionsFilter implements ExceptionFilter {
       exception instanceof Error ? exception.stack : undefined,
     );
 
-    response.status(responseBody.code).json(responseBody);
+    response.status(responseBody.statusCode).json(responseBody);
   }
 }
