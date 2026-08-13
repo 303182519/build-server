@@ -1,7 +1,7 @@
 import { BaseException, ExceptionInfo } from './base.exception';
 import { AuthExceptionCode, AuthExceptionMap } from './auth.exception';
 import { UserExceptionCode, UserExceptionMap } from './user.exception';
-import { CatExceptionCode, CatExceptionMap } from './cat.exception';
+import { PostExceptionCode, PostExceptionMap } from './post.exception';
 
 /**
  * 错误码
@@ -11,7 +11,7 @@ import { CatExceptionCode, CatExceptionMap } from './cat.exception';
 export const ErrorExceptionCode = {
   ...AuthExceptionCode,
   ...UserExceptionCode,
-  ...CatExceptionCode,
+  ...PostExceptionCode,
 } as const;
 
 export type ErrorExceptionCode =
@@ -20,7 +20,7 @@ export type ErrorExceptionCode =
 export const ErrorExceptionMap: Record<ErrorExceptionCode, ExceptionInfo> = {
   ...AuthExceptionMap,
   ...UserExceptionMap,
-  ...CatExceptionMap,
+  ...PostExceptionMap,
 };
 
 export class ErrorException extends BaseException {
