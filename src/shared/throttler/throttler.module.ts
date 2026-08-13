@@ -23,6 +23,8 @@ import type { RedisClientType } from '@keyv/redis';
           errorMessage: '请求过于频繁，请稍后再试',
           throttlers: [{ ttl: throttler.ttl, limit: throttler.limit }],
           storage,
+          // 不向响应中写入 X-RateLimit-* / Retry-After 头
+          setHeaders: false,
         };
       },
     }),
