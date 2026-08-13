@@ -1,19 +1,13 @@
 import { NestFactory } from '@nestjs/core';
 import { Logger, VersioningType } from '@nestjs/common';
-import { appUse } from './common/use';
 import { AppModule } from './app.module';
 import { getAppConfig } from './config/configuration';
 import { useSwagger } from './shared/utils/swagger';
 import { NestExpressApplication } from '@nestjs/platform-express';
+
+
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    // cors: {
-    //   origin: ['http://localhost:65325'], //只允许指定前端地址
-    //   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    //   allowedHeaders: ['Content-Type', 'Authorization'],
-    //   credentials: true, // 允许携带cookie、token
-    // },
-  });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   // 获取配置
   const appConfig = getAppConfig(app);
@@ -34,10 +28,11 @@ async function bootstrap() {
   //   type: VersioningType.URI,
   // });
 
-  // 为整个应用绑定中间件
-  appUse(app);
-
   useSwagger(app);
+
+  // 没开这个，容器 SIGTERM 时正在处理的请求会被一刀切断
+  // OnApplicationShutdown 钩子也不会触发，连接池泄漏的经典源头
+  app.enableShutdownHooks();
 
   await app.listen(server.port);
 
