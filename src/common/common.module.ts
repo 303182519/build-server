@@ -14,7 +14,7 @@ import { PostResponseInterceptor } from './interceptors/post-response.intercepto
 import { UserContextInterceptor } from './interceptors/user-context.interceptor';
 import { TimeoutInterceptor } from './interceptors/timeout.interceptor';
 import { GlobalExceptionsFilter } from './filters/global-exception.filter';
-
+import cookieParser from 'cookie-parser';
 
 
 // 横切关注点的集中注册点
@@ -42,10 +42,10 @@ import { GlobalExceptionsFilter } from './filters/global-exception.filter';
 })
 export class CommonModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    // consumer
-    //   .apply(RequestIdMiddleware, HttpLoggerMiddleware)
-    //   // /health 不进访问日志：会被探针高频调用，日志量没价值
-    //   .exclude({ path: 'health', method: RequestMethod.GET })
-    //   .forRoutes('*');
+    consumer
+      .apply(cookieParser())
+      // /health 不进访问日志：会被探针高频调用，日志量没价值
+      .exclude({ path: 'health', method: RequestMethod.GET })
+      .forRoutes('*');
   }
 }
