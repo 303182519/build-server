@@ -44,9 +44,11 @@ export class PrismaService
     }
 
     await this.$connect();
+    this.logger.log('mysql 连接已建立');
   }
 
   async onModuleDestroy() {
     await this.$disconnect();
+    this.logger.log('mysql 连接已关闭');
   }
 }
