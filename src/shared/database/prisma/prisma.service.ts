@@ -8,7 +8,7 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import { IsProduction } from '@/common/constants/environment';
 
 type LogConfig =
-  | [{ emit: 'event'; level: 'warn' }, { emit: 'event'; level: 'error' }]
+  | [{ emit: 'event'; level: 'query' },{ emit: 'event'; level: 'warn' }, { emit: 'event'; level: 'error' }]
   | ['query', 'info', 'warn', 'error'];
 
 type ClientOptions = Omit<Prisma.PrismaClientOptions, 'log'> & {
@@ -26,6 +26,7 @@ export class PrismaService
     super({
       log: IsProduction
         ? [
+            { emit: 'event', level: 'query' },
             { emit: 'event', level: 'warn' },
             { emit: 'event', level: 'error' },
           ]
@@ -42,6 +43,12 @@ export class PrismaService
         this.logger.error(e.message);
       });
     }
+
+    this.$on('query', e => {
+      if (e.duration > 100) {
+        this.logger.error(`SLOW QUERY (${e.duration}ms):`, e.query.slice(0, 200), e.params)
+      }
+    })
 
     await this.$connect();
     this.logger.log('mysql 连接已建立');
