@@ -8,7 +8,8 @@ import { NextFunction, Request, Response } from 'express';
 export class RequestIdMiddleware implements NestMiddleware {
   use(req: Request, res: Response, next: NextFunction): void {
     const incoming = req.headers['x-request-id'];
-    const id = typeof incoming === 'string' && incoming ? incoming : randomUUID();
+    const id =
+      typeof incoming === 'string' && incoming ? incoming : randomUUID();
     req.headers['x-request-id'] = id;
     res.setHeader('x-request-id', id);
     next();

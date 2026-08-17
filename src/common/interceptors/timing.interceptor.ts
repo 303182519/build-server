@@ -29,7 +29,9 @@ export class TimingInterceptor implements NestInterceptor {
   private report(req: Request, ms: number): void {
     if (ms >= this.slowMs) {
       const reqId = req.headers['x-request-id'] as string | undefined;
-      this.logger.warn(`SLOW ${req.method} ${req.originalUrl} ${ms}ms reqId=${reqId ?? '-'}`);
+      this.logger.warn(
+        `SLOW ${req.method} ${req.originalUrl} ${ms}ms reqId=${reqId ?? '-'}`,
+      );
     }
   }
 }
