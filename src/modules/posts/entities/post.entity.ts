@@ -5,6 +5,8 @@ export const POST_STATUSES: PostStatus[] = ['draft', 'published', 'archived'];
 export interface PostMeta {
   seoTitle: string;
   seoDescription: string;
+  // 封面图对外 URL（由 POST /posts/:id/cover 落地，不参与 SEO meta 的 DTO 必填校验）。
+  coverImage?: string;
 }
 
 export interface Post {
@@ -17,6 +19,27 @@ export interface Post {
   tags: string[];
   status: PostStatus;
   meta?: PostMeta;
+  authorId?: string;
+  // 乐观锁版本号，每次成功 update 自增 1
+  version: number;
+  // 浏览计数，原子自增
+  viewCount: number;
   createdAt: Date;
   updatedAt: Date;
 }
+
+// 文章修订快照。每次 update 在事务里写一条。
+export interface PostRevision {
+  id: string;
+  postId: string;
+  version: number;
+  title: string;
+  content: string;
+  createdAt: Date;
+}
+
+// 仓储写入时不接受这些字段：id/时间戳由 DB 生成，version/viewCount 由专门路径维护
+export type PostWriteData = Omit<
+  Post,
+  'id' | 'createdAt' | 'updatedAt' | 'version' | 'viewCount'
+>;
