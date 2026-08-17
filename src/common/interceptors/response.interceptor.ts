@@ -24,7 +24,7 @@ export class ResponseInterceptor<T> implements NestInterceptor {
       return next.handle() as Observable<{
         code: number;
         data: unknown;
-        msg: string;
+        message: string;
       }>;
     }
 

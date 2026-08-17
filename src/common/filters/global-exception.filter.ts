@@ -10,7 +10,6 @@ import { Request, Response } from 'express';
 import { IsProduction } from '../constants/environment';
 import { BaseException } from '../exceptions/base.exception';
 
-
 /**
  * TODO: 日志系统代办
  * 将日志系统与异常过滤器结合，将异常信息记录到日志系统中
@@ -81,8 +80,8 @@ export class GlobalExceptionsFilter implements ExceptionFilter {
       message: string;
       errors?: unknown;
     } = {
-      statusCode: HttpStatus.INTERNAL_SERVER_ERROR, 
-      code: 'INTERNAL_SERVER_ERROR', 
+      statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
+      code: 'INTERNAL_SERVER_ERROR',
       message: '服务器繁忙，请稍后重试',
     };
 
@@ -98,10 +97,9 @@ export class GlobalExceptionsFilter implements ExceptionFilter {
 
       responseBody.statusCode = exception.getStatus();
       responseBody.message = Array.isArray(exceptionResponse.message)
-          ? exceptionResponse.message.join(', ')
-          : exceptionResponse.message;
+        ? exceptionResponse.message.join(', ')
+        : exceptionResponse.message;
       responseBody.code = exceptionResponse.code || exception.name;
-
     } else if (exception instanceof HttpException) {
       const exceptionResponse = exception.getResponse();
       responseBody.statusCode = exception.getStatus();

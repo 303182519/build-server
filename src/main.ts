@@ -4,6 +4,7 @@ import { AppModule } from './app.module';
 import { getAppConfig } from './config/configuration';
 import { useSwagger } from './shared/utils/swagger';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { initSnowflake } from './shared/utils/snowflake';
 
 
 async function bootstrap() {
@@ -12,6 +13,14 @@ async function bootstrap() {
   // 获取配置
   const appConfig = getAppConfig(app);
   const { server, swagger, snowflake } = appConfig;
+
+  // 初始化雪花Id
+  initSnowflake(BigInt(snowflake.workerId), BigInt(snowflake.datacenterId));
+
+  // 全局：BigInt 输出JSON自动转字符串
+  // (BigInt.prototype as any).toJSON = function () {
+  //   return this.toString();
+  // };
 
   // 设置api前缀
   app.setGlobalPrefix(server.apiPrefix);
