@@ -9,7 +9,7 @@ import {
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 @ValidatorConstraint({ name: 'IsSlug', async: false })
-export class IsSlugConstraint implements ValidatorConstraintInterface {
+class IsSlugConstraint implements ValidatorConstraintInterface {
   validate(value: unknown): boolean {
     return typeof value === 'string' && value.length <= 80 && SLUG_RE.test(value);
   }
