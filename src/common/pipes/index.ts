@@ -1,7 +1,4 @@
-import {
-  ValidationPipe,
-  BadRequestException,
-} from '@nestjs/common';
+import { ValidationPipe, BadRequestException } from '@nestjs/common';
 
 import type { ValidationError } from 'class-validator';
 
@@ -11,13 +8,18 @@ interface FieldError {
 }
 
 // 把嵌套 DTO 的校验错误压平：errors[i].children[j].constraints → { field: 'a.b', messages: [...] }
-function flattenErrors(errors: ValidationError[], parentPath = ''): FieldError[] {
+function flattenErrors(
+  errors: ValidationError[],
+  parentPath = '',
+): FieldError[] {
   return errors.flatMap((err) => {
     const path = parentPath ? `${parentPath}.${err.property}` : err.property;
     const own: FieldError[] = err.constraints
       ? [{ field: path, messages: Object.values(err.constraints) }]
       : [];
-    const children = err.children?.length ? flattenErrors(err.children, path) : [];
+    const children = err.children?.length
+      ? flattenErrors(err.children, path)
+      : [];
     return [...own, ...children];
   });
 }
@@ -38,5 +40,5 @@ export const globalPipes = () => {
         message: '请求参数校验失败',
         errors: flattenErrors(errors),
       }),
-  })
+  });
 };
