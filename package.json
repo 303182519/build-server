@@ -40,7 +40,6 @@
     "@nestjs/swagger": "^11.4.6",
     "@nestjs/throttler": "^6.5.0",
     "@prisma/client": "^5.22.0",
-    "@skorotkiewicz/snowflake-id": "^1.0.1",
     "cache-manager": "^7.2.9",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",

@@ -44,9 +44,6 @@ importers:
       '@prisma/client':
         specifier: ^5.22.0
         version: 5.22.0(prisma@5.22.0)
-      '@skorotkiewicz/snowflake-id':
-        specifier: ^1.0.1
-        version: 1.0.1
       cache-manager:
         specifier: ^7.2.9
         version: 7.2.9
@@ -954,9 +951,6 @@ packages:
 
   '@sinonjs/fake-timers@15.4.0':
     resolution: {integrity: sha512-DsG+8/LscQIQg68J6Ef3dv10u6nVyetYn923s3/sus5eaGfTo1of5WMZSLf0UJc9KDuKPilPH0UDJCjvNbDNCA==}
-
-  '@skorotkiewicz/snowflake-id@1.0.1':
-    resolution: {integrity: sha512-leZkiZoBgg6zpVfg+cMkehr/bdKXGa6pOoX0rNc1C2jVdGTWa87+/BBgIy8C4uVtI404cuOMBu2IzIXI1BE3TQ==}
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
@@ -4325,8 +4319,6 @@ snapshots:
   '@sinonjs/fake-timers@15.4.0':
     dependencies:
       '@sinonjs/commons': 3.0.1
-
-  '@skorotkiewicz/snowflake-id@1.0.1': {}
 
   '@standard-schema/spec@1.1.0': {}
 
