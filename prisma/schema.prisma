@@ -19,30 +19,178 @@ enum SpecialRolesEnum {
   Developer  @map("developer")
 }
 
-model User {
-  id           String             @id @default(uuid())
-  username     String             @unique
-  email        String?            @unique
-  password     String
-  nickname     String?
-  avatar       String?
-  isActive     Boolean            @default(true) @map("is_active")
-  createdAt    DateTime           @default(now()) @map("created_at")
-  updatedAt    DateTime           @updatedAt @map("updated_at")
-  deletedAt    DateTime?          @map("deleted_at")
 
-  specialRoles UserSpecialRole[]
+// ----------------------------------------------------------------------------
+// User（示例，全部id改为雪花BigInt UNSIGNED）
+// ----------------------------------------------------------------------------
+model User {
+  id        BigInt    @id // ❗不要写@default(autoincrement())，代码层生成雪花ID
+  createdAt DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt DateTime? @map("deleted_at") @db.DateTime(3) // 软删除：null=未删除，有值=删除时间
+
+
+  email     String    @unique @db.VarChar(255)
+  username  String    @unique @db.VarChar(100)
+  password  String    @db.VarChar(255)
+
+  @@index([deletedAt]) // 软删除查询索引
+
+  // 关联
+  roles UserRoles[]     
+  refreshTokens RefreshToken[]
+  posts Post[]
 
   @@map("users")
 }
 
-model UserSpecialRole {
-  id     Int              @id @default(autoincrement())
-  userId String
-  role   SpecialRolesEnum
+model Role {
+  id          BigInt    @id
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3) // 软删除：null=未删除，有值=删除时间
 
-  user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  code        String    @unique
 
-  @@unique([userId, role])
-  @@map("user_special_roles")
+  users UserRoles[]     
+  rolePermissions RolePermissions[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          BigInt    @id
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @db.DateTime(3) // 软删除：null=未删除，有值=删除时间
+
+  name        String    @unique
+  code        String    @unique @db.VarChar(255)
+  description String?
+
+  rolePermissions RolePermissions[]
+
+  @@map("permissions")
+}
+
+// 用户 ↔ 角色 中间表
+model UserRoles {
+  userId BigInt @map("user_id")
+  roleId BigInt @map("role_id")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+// 角色 ↔ 权限 中间表
+model RolePermissions {
+  roleId       BigInt @map("role_id")
+  permissionId BigInt @map("permission_id")  
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+// ----------------------------------------------------------------------------
+// RefreshToken —— Day 32：可撤销的刷新令牌（呼应 Day 31「JWT access + 可撤销 refresh」）
+// ----------------------------------------------------------------------------
+// access token 是无状态 JWT（不入库）；refresh token 是不透明随机串，这里**只存它的
+// sha256 哈希**——数据库泄露也拿不到可用的 refresh（和"只存密码哈希"同理）。
+// 登出 / 轮换时把对应行 revokedAt 置上，即可即时作废。
+model RefreshToken {
+  id        BigInt    @id
+  createdAt DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  revokedAt DateTime? @map("revoked_at") @db.DateTime(3)
+
+  userId    BigInt    @map("user_id")
+  tokenHash String    @unique @map("token_hash") @db.VarChar(64) // sha256 hex = 64 字符
+  expiresAt DateTime  @map("expires_at") @db.DateTime(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+
+// ----------------------------------------------------------------------------
+// Post — 雪花ID，多对多标签中间表方案
+// ----------------------------------------------------------------------------
+model Post {
+  id        BigInt    @id
+  title     String    @db.VarChar(200)
+  slug      String    @unique @db.VarChar(120)
+  content   String    @db.Text
+
+  postTags PostTag[]
+
+  status    String    @default("draft") @db.VarChar(20)
+  meta      Json?     @db.Json
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.DateTime(3) 
+
+  version    Int @default(1)
+  viewCount  Int @default(0) @map("view_count")
+
+  revisions PostRevision[]
+
+  authorId BigInt? @map("author_id")
+  author   User?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([authorId])
+  @@map("posts")
+}
+
+// ----------------------------------------------------------------------------
+// PostRevision 文章修订快照
+// ----------------------------------------------------------------------------
+model PostRevision {
+  id        BigInt    @id
+  postId    BigInt    @map("post_id")
+  version   Int
+  title     String    @db.VarChar(200)
+  content   String    @db.Text
+  createdAt DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, version])
+  @@index([postId, createdAt])
+  @@map("post_revisions")
+}
+
+// ----------------------------------------------------------------------------
+// Tag 标签表
+// ----------------------------------------------------------------------------
+model Tag {
+  id        BigInt    @id
+  name      String    @db.VarChar(50) @unique
+  postTags  PostTag[]
+
+  @@map("tags")
+}
+
+// ----------------------------------------------------------------------------
+// PostTag 多对多中间表
+// ----------------------------------------------------------------------------
+model PostTag {
+  postId BigInt @map("post_id")
+  tagId  BigInt @map("tag_id")
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, tagId])
+  @@map("post_tags")
 }
