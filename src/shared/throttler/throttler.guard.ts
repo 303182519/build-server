@@ -24,9 +24,9 @@ export class AppThrottlerGuard extends ThrottlerGuard {
 
   private getUserId(req: AuthRequest): string | undefined {
     try {
-      return useRequestUser().id;
+      return useRequestUser().id.toString();
     } catch {
-      return req.user?.id;
+      return req.user?.id.toString();
     }
   }
 }
