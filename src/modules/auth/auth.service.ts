@@ -56,7 +56,7 @@ export class AuthService {
 
 
   async login(dto: LoginDto) {
-    // Day 40：账号级闸门——锁定优先于一切。已锁就省掉 bcrypt 比对（省 CPU），也避免再泄露信息。
+    // 账号级闸门——锁定优先于一切。已锁就省掉 bcrypt 比对（省 CPU），也避免再泄露信息。
     // Redis 不通时 isLocked 恒 false（降级），登录照常走，绝不被这层安全配置拖垮。
     if (await this.loginAttemptService.isLocked(dto.email)) {
       // 423 Locked（RFC 4918）：语义比 429/403 更准——账号被锁，不是「频率太快」也不是「没权限」。
