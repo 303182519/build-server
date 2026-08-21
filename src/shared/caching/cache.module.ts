@@ -2,6 +2,7 @@ import { AppConfigModule } from '@/config/config.module';
 import { getConfig } from '@/config/configuration';
 import { CACHE_MANAGER, CacheModule } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
+import type { RedisClientType } from '@keyv/redis';
 import { ConfigService } from '@nestjs/config';
 import { Keyv } from 'keyv';
 import KeyvRedis from '@keyv/redis';
@@ -11,6 +12,7 @@ import {
   Logger,
   Module,
   OnApplicationBootstrap,
+  OnModuleDestroy,
 } from '@nestjs/common';
 import { CacheHealthIndicator } from './cache.health';
 import { REDIS_CLIENT } from './cache.tokens';
@@ -85,13 +87,14 @@ const buildRedisUrl = (redis: {
   ],
   exports: [CacheService, HashCacheService, REDIS_CLIENT],
 })
-export class RedisCacheModule implements OnApplicationBootstrap {
+export class RedisCacheModule implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(RedisCacheModule.name);
 
   constructor(
     private readonly configService: ConfigService,
     @Inject(CACHE_MANAGER) private readonly cache: Cache,
     private readonly health: CacheHealthIndicator,
+    @Inject(REDIS_CLIENT) private readonly redisClient: RedisClientType | null,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -111,5 +114,20 @@ export class RedisCacheModule implements OnApplicationBootstrap {
 
     this.logger.error('Redis 已配置但不可达，启动终止');
     throw new Error('Redis is configured but not reachable');
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (!this.redisClient || this.redisClient.isOpen === false) {
+      return;
+    }
+
+    try {
+      await this.redisClient.quit();
+      this.logger.log('Redis 连接已优雅关闭');
+    } catch (err) {
+      this.logger.warn(
+        `Redis 关闭异常: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 }
