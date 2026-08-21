@@ -41,6 +41,7 @@ export declare enum HttpStatus {
   I_AM_A_TEAPOT = 418, // 我是一个茶壶
   MISDIRECTED = 421, // 误导
   UNPROCESSABLE_ENTITY = 422, // 不可处理实体
+  ACCOUNT_LOCKED = 423, // 账号已被锁定
   FAILED_DEPENDENCY = 424, // 依赖失败
   PRECONDITION_REQUIRED = 428, // 需要前提条件
   TOO_MANY_REQUESTS = 429, // 请求过多
