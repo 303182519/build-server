@@ -97,9 +97,11 @@ export class AuthService {
       await this.loginAttemptService.recordFailure(dto.email);
       throw new ErrorException(ErrorExceptionCode.INVALID_CREDENTIALS);
     }
-    //成功即清零。否则用户偶发手滑几次后，计数器会在窗口内一直挂着顶到阈值。
+    // 成功即清零。否则用户偶发手滑几次后，计数器会在窗口内一直挂着顶到阈值。
     await this.loginAttemptService.clear(dto.email);
-    return this.authResponse(user, await this.refreshTokenService.issue(user));
+    // 登录成功后，生成新的 access token 和 refresh token。
+    const tokens = await this.refreshTokenService.issue(user);
+    return this.authResponse(user, tokens);
   }
 
   async logout(refreshToken: string) {

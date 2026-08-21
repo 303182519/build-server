@@ -83,7 +83,7 @@ export class RefreshTokenService {
         data: { revokedAt: new Date() },
       });
       if (revoked.count === 0) throw new ErrorException(ErrorExceptionCode.INVALID_REFRESH_TOKEN);
-      return { user: record.user, tokens: await this.issue(record.user, tx) };
+      return { tokens: await this.issue(record.user, tx) };
     });
   }
   /**
