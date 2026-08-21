@@ -4,8 +4,7 @@ import {
   ErrorExceptionCode,
 } from '@/common/exceptions/error.exception';
 import { getConfig } from '@/config/configuration';
-import { UsersService } from '@/modules/users/users.service';
-import { CacheKeys, hashCacheToken } from '@/shared/caching/cache.constants';
+import { hashCacheToken } from '@/shared/caching/cache.constants';
 import { CacheService } from '@/shared/caching/cache.service';
 import { PrismaService } from '@/shared/database/prisma/prisma.service';
 import { generateSnowflakeId } from '@/shared/utils/snowflake';
@@ -23,50 +22,13 @@ export class RefreshTokenService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly cacheService: CacheService,
-    private readonly usersService: UsersService,
   ) {}
-
-  async create(user: User) {
-    const tokens = this.generateTokens(user);
-
-    if (this.cacheService.isRedisEnabled()) {
-      const { jwt } = getConfig(this.configService);
-      await this.cacheService.set(
-        CacheKeys.AUTH_REFRESH_TOKEN(tokens.refreshToken),
-        user.id.toString(),
-        jwt.refreshExpiresIn,
-      );
-    }
-
-    await this.prisma.refreshToken.create({
-      data: {
-        id: BigInt(generateSnowflakeId()),
-        tokenHash: hashCacheToken(tokens.refreshToken),
-        expiresAt: tokens.refreshExpiresAt,
-        userId: user.id,
-      },
-    });
-
-    return tokens;
-  }
-
-  async refreshToken(refreshToken: string | undefined) {
-    if (!refreshToken) {
-      throw new ErrorException(ErrorExceptionCode.INVALID_REFRESH_TOKEN);
-    }
-
-    if (this.cacheService.isRedisEnabled()) {
-      return this.refreshTokenViaRedis(refreshToken);
-    }
-    return this.refreshTokenViaDb(refreshToken);
-  }
 
   // client 可传入事务句柄 tx：rotate 把"作废旧的 + 写新的"放进同一事务时需要
   async issue(
     user: User,
     client: Prisma.TransactionClient = this.prisma,
   ) {
-
     const payload: JwtPayload = {
       sub: user.id.toString(),
       type: TokenType.ACCESS,
@@ -97,29 +59,35 @@ export class RefreshTokenService {
       refreshExpiresAt,
     };
   }
-
-  generateTokens(user: User) {
-    const payload: JwtPayload = {
-      sub: user.id.toString(),
-      type: TokenType.ACCESS,
-    };
-
-    const { jwt } = getConfig(this.configService);
-
-    const accessToken = this.jwtService.sign(payload);
-    const refreshToken = this.jwtService.sign(
-      { ...payload, type: TokenType.REFRESH },
-      {
-        expiresIn: jwt.refreshExpiresIn,
-      },
-    );
-
-    const accessExpiresAt = Date.now() + jwt.accessExpiresIn * 1000;
-    const refreshExpiresAt = new Date(Date.now() + jwt.refreshExpiresIn * 1000);
-
-    return { accessToken, refreshToken, accessExpiresAt, refreshExpiresAt };
+  /**
+   * 用 refresh 换新 token：校验 → 作废旧的 → 发新的，**整个放进一个事务**。
+   * 为什么要事务（对照 posts update 的 $transaction）：
+   *  - 原子性：若发新 token 失败，作废也回滚，用户不会被"凭空登出"。
+   *  - 防并发重放：两个请求拿同一个 refresh 并发刷新时，靠"条件作废 + 命中行数"
+   *    保证只有一个成功（另一个被行锁挡住后看到已 revoked → 0 行 → 拒绝）。
+   */
+  async rotate(rawRefresh: string | undefined) {
+    if (!rawRefresh) {
+      throw new ErrorException(ErrorExceptionCode.INVALID_REFRESH_TOKEN);
+    }
+    const hash = hashCacheToken(rawRefresh);
+    return this.prisma.$transaction(async (tx) => {
+      const record = await tx.refreshToken.findUnique({
+        where: { tokenHash: hash },
+        include: { user: true },
+      });
+      if (!record || record.revokedAt || record.expiresAt <= new Date()) {
+        throw new ErrorException(ErrorExceptionCode.INVALID_REFRESH_TOKEN);
+      }
+      // 条件作废：只在"仍未撤销"时作废。命中 0 行 = 已被并发请求抢先用过 → 拒绝（一次性保证）
+      const revoked = await tx.refreshToken.updateMany({
+        where: { id: record.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      if (revoked.count === 0) throw new ErrorException(ErrorExceptionCode.INVALID_REFRESH_TOKEN);
+      return { user: record.user, tokens: await this.issue(record.user, tx) };
+    });
   }
-
   /**
    * 撤销 refresh token（登出 / 主动作废）。
    * 不物理删除：置 revokedAt 即时失效，保留审计轨迹。Redis 命中时同步清除。
@@ -127,10 +95,6 @@ export class RefreshTokenService {
   async revoke(refreshToken: string) {
     if (!refreshToken) {
       return;
-    }
-
-    if (this.cacheService.isRedisEnabled()) {
-      await this.cacheService.del(CacheKeys.AUTH_REFRESH_TOKEN(refreshToken));
     }
 
     await this.prisma.refreshToken.updateMany({
@@ -154,103 +118,5 @@ export class RefreshTokenService {
     });
 
     return { deletedCount: result.count };
-  }
-
-  private async refreshTokenViaDb(refreshToken: string) {
-    const tokenRecord = await this.prisma.refreshToken.findUnique({
-      where: { tokenHash: hashCacheToken(refreshToken) },
-      include: { user: true },
-    });
-
-    if (
-      !tokenRecord ||
-      tokenRecord.revokedAt ||
-      tokenRecord.expiresAt < new Date()
-    ) {
-      throw new ErrorException(ErrorExceptionCode.INVALID_REFRESH_TOKEN);
-    }
-
-    const tokens = this.generateTokens(tokenRecord.user);
-    const now = new Date();
-
-    // 轮换：撤销旧 token，写入新 token（旧 token 立即作废）
-    await this.prisma.$transaction([
-      this.prisma.refreshToken.update({
-        where: { id: tokenRecord.id },
-        data: { revokedAt: now },
-      }),
-      this.prisma.refreshToken.create({
-        data: {
-          id: BigInt(generateSnowflakeId()),
-          tokenHash: hashCacheToken(tokens.refreshToken),
-          expiresAt: tokens.refreshExpiresAt,
-          userId: tokenRecord.userId,
-        },
-      }),
-    ]);
-
-    if (this.cacheService.isRedisEnabled()) {
-      const { jwt } = getConfig(this.configService);
-      await this.cacheService.set(
-        CacheKeys.AUTH_REFRESH_TOKEN(tokens.refreshToken),
-        tokenRecord.userId.toString(),
-        jwt.refreshExpiresIn,
-      );
-    }
-
-    return tokens;
-  }
-
-  private async refreshTokenViaRedis(refreshToken: string) {
-    const oldKey = CacheKeys.AUTH_REFRESH_TOKEN(refreshToken);
-    const userId = await this.cacheService.get<string>(oldKey);
-
-    if (!userId) {
-      return this.refreshTokenViaDb(refreshToken);
-    }
-
-    let user: User;
-    try {
-      user = await this.usersService.findOne({ id: userId });
-    } catch {
-      // 用户已被删除等情况：清理孤立的 refresh token 并拒绝
-      await this.cacheService.del(oldKey);
-      throw new ErrorException(ErrorExceptionCode.INVALID_REFRESH_TOKEN);
-    }
-
-    const tokens = this.generateTokens(user);
-    const { jwt } = getConfig(this.configService);
-
-    const rotated = await this.cacheService.rotateRefreshToken(
-      oldKey,
-      CacheKeys.AUTH_REFRESH_TOKEN(tokens.refreshToken),
-      userId,
-      jwt.refreshExpiresIn,
-    );
-
-    if (!rotated) {
-      throw new ErrorException(ErrorExceptionCode.INVALID_REFRESH_TOKEN);
-    }
-
-    // 轮换：撤销旧 DB 记录，写入新记录
-    await this.prisma.$transaction([
-      this.prisma.refreshToken.updateMany({
-        where: {
-          tokenHash: hashCacheToken(refreshToken),
-          revokedAt: null,
-        },
-        data: { revokedAt: new Date() },
-      }),
-      this.prisma.refreshToken.create({
-        data: {
-          id: BigInt(generateSnowflakeId()),
-          tokenHash: hashCacheToken(tokens.refreshToken),
-          expiresAt: tokens.refreshExpiresAt,
-          userId: user.id,
-        },
-      }),
-    ]);
-
-    return tokens;
   }
 }
