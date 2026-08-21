@@ -24,7 +24,11 @@ export const CacheKeys = {
   
   // token本身是敏感值，hash后当key是对的，但命名可以更清晰
   AUTH_REFRESH_TOKEN: (token: string) => `auth:refreshToken:hash=${hashCacheToken(token)}`,
-  
+
+  // 登录失败计数器：邮箱归一化（trim + 小写），避免大小写差异算成两个账号
+  AUTH_LOGIN_FAIL: (email: string) =>
+    `auth:loginFail:email=${email.trim().toLowerCase()}`,
+
   // ===== 列表类场景（多参数） =====
   ORDER_LIST: (params: { supplierId: string; page: number; status?: string }) => 
     [

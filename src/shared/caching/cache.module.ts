@@ -18,6 +18,7 @@ import { CacheHealthIndicator } from './cache.health';
 import { REDIS_CLIENT } from './cache.tokens';
 import { CacheService } from './cache.service';
 import { HashCacheService } from './hash-cache.service';
+import { LoginAttemptService } from './login-attempt.service';
 
 const buildRedisUrl = (redis: {
   url?: string;
@@ -84,8 +85,14 @@ const buildRedisUrl = (redis: {
     CacheService,
     HashCacheService,
     CacheHealthIndicator,
+    LoginAttemptService,
   ],
-  exports: [CacheService, HashCacheService, REDIS_CLIENT],
+  exports: [
+    CacheService, 
+    HashCacheService, 
+    LoginAttemptService, 
+    REDIS_CLIENT,
+  ],
 })
 export class RedisCacheModule implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(RedisCacheModule.name);
