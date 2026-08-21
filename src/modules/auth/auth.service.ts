@@ -2,8 +2,6 @@ import {
   ErrorException,
   ErrorExceptionCode,
 } from '@/common/exceptions/error.exception';
-import { BaseException } from '@/common/exceptions/base.exception';
-import { createResponse } from '@/common/response/base.response';
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { verify } from 'argon2';
@@ -107,7 +105,7 @@ export class AuthService {
   async logout(refreshToken: string) {
     await this.refreshTokenService.revoke(refreshToken);
 
-    return createResponse({ success: true });
+    return { success: true };
   }
 
   private authResponse(user: UserWithRoles, tokens: { refreshToken: string; accessToken: string; accessExpiresAt: number }) {
