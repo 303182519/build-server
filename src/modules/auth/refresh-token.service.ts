@@ -5,7 +5,6 @@ import {
 } from '@/common/exceptions/error.exception';
 import { getConfig } from '@/config/configuration';
 import { hashCacheToken } from '@/shared/caching/cache.constants';
-import { CacheService } from '@/shared/caching/cache.service';
 import { PrismaService } from '@/shared/database/prisma/prisma.service';
 import { generateSnowflakeId } from '@/shared/utils/snowflake';
 import { Prisma, User } from '@prisma/client';
@@ -21,7 +20,6 @@ export class RefreshTokenService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
-    private readonly cacheService: CacheService,
   ) {}
 
   // client 可传入事务句柄 tx：rotate 把"作废旧的 + 写新的"放进同一事务时需要
