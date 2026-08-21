@@ -9,22 +9,9 @@ export const hashCacheToken = (token: string): string => {
 };
 
 /**
- * 业务:参数1=值1:参数2=值2（如 order:list:supplier=A:page=1）
- */
-export const CacheKeys = {
-  USER_BY_ID: (id: string | number) => `users:${id}`,
-  BENCHMARK_USER_BY_ID: (id: string | number) => `benchmark:users:${id}`,
-
-  USER_BY_USERNAME: (username: string) => `users:username:${username}`,
-  ROLE_TREE: (roleId: string | number) => `roles:tree:${roleId}`,
-  PERMISSION_BY_USER: (userId: string | number) => `permissions:user:${userId}`,
-
-  AUTH_REFRESH_TOKEN: (token: string) =>
-    `auth:refresh:${hashCacheToken(token)}`,
-} as const;
-
-/**
  * 改造后 - 更规范的企业级命名
+ * 
+ */
 export const CacheKeys = {
   // 单值ID场景，短形式可接受，但建议统一
   USER_BY_ID: (id: string | number) => `user:profile:id=${id}`,
@@ -46,4 +33,4 @@ export const CacheKeys = {
       `page=${params.page}`,
       params.status !== undefined ? `status=${params.status}` : '',
     ].filter(Boolean).join(':'),
-} as const; */
+} as const;
