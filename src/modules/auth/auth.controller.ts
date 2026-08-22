@@ -12,20 +12,20 @@ import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { RefreshTokenService } from './refresh-token.service';
-import { AuthExceptionMap, AuthExceptionCode } from '@/common/exceptions/auth.exception';
 import {
-  AuthResponseDto,
-  LogoutResponseDto,
-  RefreshResponseDto,
-} from './dto/auth-response.dto';
-
-
+  AuthExceptionMap,
+  AuthExceptionCode,
+} from '@/common/exceptions/auth.exception';
 import {
   ApiEnvelope,
   ApiErrorEnvelope,
   ApiExceptionEnvelope,
 } from '@/common/decorators/api-envelope.decorator';
-
+import {
+  AuthResponseDto,
+  LogoutResponseDto,
+  RefreshResponseDto,
+} from './dto/auth-response.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -86,7 +86,10 @@ export class AuthController {
     summary: '用 refresh 换新 access（轮换：旧 refresh 立即作废）',
   })
   @ApiEnvelope(RefreshResponseDto)
-  @ApiExceptionEnvelope(AuthExceptionMap, AuthExceptionCode.INVALID_REFRESH_TOKEN)
+  @ApiExceptionEnvelope(
+    AuthExceptionMap,
+    AuthExceptionCode.INVALID_REFRESH_TOKEN,
+  )
   @Throttle({ default: AUTH_THROTTLE.refreshToken })
   @Public()
   @Post('refresh-token')
