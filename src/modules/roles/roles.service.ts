@@ -22,28 +22,33 @@ const roleBaseSelect = {
   updatedAt: true,
 } satisfies Prisma.RoleSelect;
 
-// 带 permissions 关联的 include：通过显式 join 表 rolePermissions 拉取 permission。
+// 带 permissions 关联的完整 select：基础字段 + rolePermissions.permission 嵌套。
+// 注意：Prisma 不允许同一查询同时使用 select 与 include（类型层会报
+// "Please either choose `select` or `include`"），因此把关联一并放进 select。
 // 返回后再将 rolePermissions[].permission 拍平成 permissions[]，与旧 TypeORM 版响应形状对齐。
-const roleWithPermissionsInclude = {
+const roleFullSelect = {
+  id: true,
+  name: true,
+  description: true,
+  code: true,
+  createdAt: true,
+  updatedAt: true,
   rolePermissions: {
-    include: {
+    select: {
       permission: {
         select: {
           id: true,
           name: true,
           code: true,
           description: true,
-          createdAt: true,
-          updatedAt: true,
         } satisfies Prisma.PermissionSelect,
       },
     },
   },
-} satisfies Prisma.RoleInclude;
+} satisfies Prisma.RoleSelect;
 
 type RoleWithPermissionsPayload = Prisma.RoleGetPayload<{
-  select: typeof roleBaseSelect;
-  include: typeof roleWithPermissionsInclude;
+  select: typeof roleFullSelect;
 }>;
 
 /**
@@ -71,27 +76,55 @@ export class RolesService {
   ) {}
 
   async create(createRoleDto: CreateRoleDto) {
-    const permissions = await this.permissionsService.findByCodes(
-      createRoleDto.permissions,
-    );
+    // 入参去重：避免 ['A','A'] 触发重复 in 查询与语义歧义
+    const permissionCodes = [...new Set(createRoleDto.permissions ?? [])];
 
-    const role = await this.prisma.role.create({
-      data: {
-        id: BigInt(generateSnowflakeId()),
-        name: createRoleDto.name,
-        description: createRoleDto.description,
-        code: createRoleDto.code,
-        rolePermissions: {
-          create: permissions.map((permission) => ({
-            permissionId: permission.id,
-          })),
-        },
-      },
-      select: roleBaseSelect,
-      include: roleWithPermissionsInclude,
+    // 包事务：保证「权限完整性校验 + 角色创建」原子性，
+    // 防止校验通过后、写入前权限被软删导致中间态不一致。
+    return this.prisma.$transaction(async (tx) => {
+      // 权限完整性校验：任一 code 找不到即整体失败，
+      // 杜绝 findByCodes 静默丢失导致「用户以为授 3 个权限，实际只落 2 个」。
+      let permissions: { id: bigint }[] = [];
+      if (permissionCodes.length > 0) {
+        permissions = await tx.permission.findMany({
+          where: { code: { in: permissionCodes }, deletedAt: null },
+          select: { id: true },
+        });
+        if (permissions.length !== permissionCodes.length) {
+          throw new ErrorException(ErrorExceptionCode.PERMISSION_NOT_FOUND);
+        }
+      }
+
+      // code 唯一约束是唯一可靠的防重保障（预检查存在 TOCTOU），
+      // TOCTOU 说白了就是"查的时候还在，用的时候没了"。
+      // 通过捕获 P2002 转业务错误，避免透传 500 暴露实现细节。
+      try {
+        const role = await tx.role.create({
+          data: {
+            id: BigInt(generateSnowflakeId()),
+            name: createRoleDto.name,
+            description: createRoleDto.description,
+            code: createRoleDto.code,
+            rolePermissions: {
+              create: permissions.map((permission) => ({
+                permissionId: permission.id,
+              })),
+            },
+          },
+          select: roleFullSelect,
+        });
+
+        return flattenRolePermissions(role);
+      } catch (e) {
+        if (
+          e instanceof Prisma.PrismaClientKnownRequestError &&
+          e.code === 'P2002'
+        ) {
+          throw new ErrorException(ErrorExceptionCode.ROLE_CODE_EXISTS);
+        }
+        throw e;
+      }
     });
-
-    return flattenRolePermissions(role);
   }
 
   findByCodes(codes: string[]) {
@@ -125,8 +158,7 @@ export class RolesService {
   async findAll() {
     const roles = await this.prisma.role.findMany({
       where: { deletedAt: null },
-      select: roleBaseSelect,
-      include: roleWithPermissionsInclude,
+      select: roleFullSelect,
     });
 
     return roles.map(flattenRolePermissions);
@@ -135,8 +167,7 @@ export class RolesService {
   async findOne(id: bigint) {
     const role = await this.prisma.role.findFirst({
       where: { id: id, deletedAt: null },
-      select: roleBaseSelect,
-      include: roleWithPermissionsInclude,
+      select: roleFullSelect,
     });
 
     return role ? flattenRolePermissions(role) : null;
