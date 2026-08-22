@@ -19,14 +19,13 @@ export class CreateRoleDto {
   })
   @IsNotEmpty()
   @IsString()
-  name: string;
+  name!: string;
 
   @ApiProperty({
     description: '角色描述',
     example: '管理员',
   })
   @IsOptional()
-  @IsNotEmpty()
   @IsString()
   description?: string;
 
@@ -34,20 +33,19 @@ export class CreateRoleDto {
     description: '角色编码',
     example: 'admin',
   })
-  @IsNotEmpty()
   @IsString()
   @Matches(/^[a-zA-Z0-9][a-zA-Z0-9_-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/, {
     message:
       '角色代码只能包含字母、数字、下划线和短横线，且不能以下划线或短横线开头或结尾',
   })
-  code: string;
+  code!: string;
 
   @ApiProperty({
     description: '角色权限',
     example: [PermissionCode.USER_CREATE, PermissionCode.USER_READ],
   })
-  @IsNotEmpty()
+  @IsOptional()
   @IsArray()
   @IsEnum(PermissionCode, { each: true })
-  permissions: PermissionCodeType[];
+  permissions?: PermissionCodeType[];
 }
