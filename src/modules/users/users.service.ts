@@ -6,7 +6,7 @@ import {
 } from '@/common/exceptions/error.exception';
 import { PrismaService } from '@/shared/database/prisma/prisma.service';
 import { generateSnowflakeId } from '@/shared/utils/snowflake';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { hash, verify } from 'argon2';
@@ -119,6 +119,8 @@ function specialRolesFromDto(
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly rolesService: RolesService,
@@ -562,38 +564,76 @@ export class UsersService {
     return { message: 'Password updated successfully' };
   }
 
-  async remove(id: bigint): Promise<UserBasePayload> {
-
-
-    const user = await this.prisma.user.findFirst({
-      where: { id: id, deletedAt: null },
-      select: { id: true, specialRoles: true, username: true },
-    });
-
-    if (!user) {
-      throw new ErrorException(ErrorExceptionCode.USER_NOT_FOUND);
+  async remove(id: bigint): Promise<{ success: true }> {
+    // P0：禁止删除当前登录用户——管理员手滑点了自己不至于立即登出。
+    // 与 roles.service.remove 的「系统角色保护」先例对齐：service 层防御性校验，
+    // 不依赖上层守卫。错误码独立化（CANNOT_DELETE_SELF）以便前端/监控区分
+    // 「自删防护」与「目标为 SuperAdmin」两种不同语义，原 SUPER_ADMIN_IS_SPECIAL
+    // 仅保留给「目标并发变成 SuperAdmin」这一竞态场景。
+    if (isRequestUser(id.toString())) {
+      throw new ErrorException(ErrorExceptionCode.CANNOT_DELETE_SELF);
     }
 
-    // 如果用户是超级管理员，则不能删除
-    if (user.specialRoles === SpecialRolesEnum.SuperAdmin) {
-      throw new ErrorException(ErrorExceptionCode.SUPER_ADMIN_IS_SPECIAL);
-    }
-
-    try {
-      const removed = await this.prisma.user.update({
-        where: { id: id },
-        data: { deletedAt: new Date() },
-        select: userBaseSelect,
-      });
-      return removed;
-    } catch (e) {
-      if (
-        e instanceof Prisma.PrismaClientKnownRequestError &&
-        e.code === 'P2025'
-      ) {
-        throw new ErrorException(ErrorExceptionCode.USER_NOT_FOUND);
+    // 包事务：保证「条件软删 + 审计」原子性，防止校验通过后、写入前状态漂移，
+    // 与 roles.service.remove 的 $transaction 惯例一致。
+    return this.prisma.$transaction(async (tx) => {
+      try {
+        // 条件 UPDATE：deletedAt IS NULL + 非 SuperAdmin，UPDATE 不匹配即抛 P2025。
+        // ⚠️ specialRoles 是可空字段（schema: String? @db.VarChar(255)），SQL 三值逻辑下
+        // NOT (specialRoles = 'SuperAdmin') 当字段为 NULL 时 → NOT NULL → NULL → WHERE 排除该行，
+        // 会导致「无 specialRoles 的普通用户」被误判为 SuperAdmin 拒绝删除。
+        // 必须用 OR 显式放行 NULL 分支。
+        await tx.user.update({
+          where: {
+            id,
+            deletedAt: null,
+            OR: [
+              { specialRoles: null },
+              { specialRoles: { not: SpecialRolesEnum.SuperAdmin } },
+            ],
+          },
+          data: { deletedAt: new Date() },
+          select: { id: true },
+        });
+      } catch (e) {
+        if (
+          e instanceof Prisma.PrismaClientKnownRequestError &&
+          e.code === 'P2025'
+        ) {
+          // 依赖 MySQL InnoDB 默认 REPEATABLE READ：Prisma $transaction 默认沿用 DB
+          // 默认隔离级别，同一事务内复查复用快照，不引入 UPDATE 之后的新时间窗口。
+          const stillExists = await tx.user.findFirst({
+            where: { id },
+            select: { deletedAt: true, specialRoles: true },
+          });
+          if (!stillExists || stillExists.deletedAt !== null) {
+            throw new ErrorException(ErrorExceptionCode.USER_NOT_FOUND);
+          }
+          // 记录仍存在但被 OR 条件拦住 → 并发把角色改成了 SuperAdmin
+          throw new ErrorException(ErrorExceptionCode.SUPER_ADMIN_IS_SPECIAL);
+        }
+        throw e;
       }
-      throw e;
-    }
+
+      // 关联表（UserRoles）不物理删——保留可恢复性，
+      // 与 roles.service.remove 的策略一致：查询层通过 user.deletedAt 过滤脏数据。
+      // 残留的 (userId, roleId) 行不会被活跃路径触达（已删用户的 userId 不再被查询），
+      // 仅数据膨胀，无数据泄露。
+
+      // 操作人审计：项目无 AuditLog 服务，用 Logger 记录最小轨迹。
+      // useRequestUser() 仅在请求生命周期内可用；非请求上下文（如定时任务）
+      // 降级仍记目标信息，保证至少有「发生了删除」的可追溯线索。
+      // 写法与 roles.service.remove 对齐，便于跨模块统一检索。
+      try {
+        const operator = useRequestUser();
+        this.logger.log(
+          `User removed: id=${id}, operator=${operator.id}`,
+        );
+      } catch {
+        this.logger.log(`User removed: id=${id}`);
+      }
+
+      return { success: true } as const;
+    });
   }
 }
