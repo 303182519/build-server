@@ -6,11 +6,6 @@ import {
 import { PermissionCode } from '@/common/constants/permissions';
 import { Permission } from '@/common/decorators/permission.decorator';
 import {
-  SpecialRoles,
-  SpecialRolesEnum,
-} from '@/common/decorators/special-roles.decorator';
-import { SpecialRolesGuard } from '@/common/guards/special-roles.guard';
-import {
   PermissionExceptionCode,
   PermissionExceptionMap,
 } from '@/common/exceptions/permission.exception';
@@ -44,11 +39,11 @@ const idParam = ApiParam({
   description: '角色雪花 ID',
 });
 
-// TODO: 需要思考 Permission 和 SpecialRoles 的冲突关系
+
 
 @ApiBearerAuth()
 @Controller('roles')
-@UseGuards(SpecialRolesGuard)
+
 export class RolesController {
   constructor(private readonly rolesService: RolesService) {}
 
@@ -63,7 +58,6 @@ export class RolesController {
   )
   @ApiExceptionEnvelope(RoleExceptionMap, RoleExceptionCode.ROLE_CODE_EXISTS)
   @Permission(PermissionCode.ROLE_CREATE)
-  @SpecialRoles([SpecialRolesEnum.SuperAdmin])
   @Post()
   create(@Body() createRoleDto: CreateRoleDto) {
     return this.rolesService.create(createRoleDto);
@@ -103,7 +97,6 @@ export class RolesController {
     PermissionExceptionCode.PERMISSION_NOT_FOUND,
   )
   @Permission(PermissionCode.ROLE_UPDATE)
-  @SpecialRoles([SpecialRolesEnum.SuperAdmin])
   @Patch(':id')
   update(
     @Param('id', ParseSnowflakePipe) id: bigint,
@@ -121,7 +114,6 @@ export class RolesController {
   @ApiExceptionEnvelope(RoleExceptionMap, RoleExceptionCode.ROLE_IS_SYSTEM)
   @ApiExceptionEnvelope(RoleExceptionMap, RoleExceptionCode.ROLE_IN_USE)
   @Permission(PermissionCode.ROLE_DELETE)
-  @SpecialRoles([SpecialRolesEnum.SuperAdmin])
   @Delete(':id')
   remove(@Param('id', ParseSnowflakePipe) id: bigint) {
     return this.rolesService.remove(id);
