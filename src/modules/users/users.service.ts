@@ -60,6 +60,7 @@ const userWithRolesSelect = {
           code: true,
           createdAt: true,
           updatedAt: true,
+          deletedAt: true,
         } satisfies Prisma.RoleSelect,
       },
     },
@@ -566,32 +567,23 @@ export class UsersService {
 
   async remove(id: bigint): Promise<{ success: true }> {
     // P0：禁止删除当前登录用户——管理员手滑点了自己不至于立即登出。
-    // 与 roles.service.remove 的「系统角色保护」先例对齐：service 层防御性校验，
-    // 不依赖上层守卫。错误码独立化（CANNOT_DELETE_SELF）以便前端/监控区分
-    // 「自删防护」与「目标为 SuperAdmin」两种不同语义，原 SUPER_ADMIN_IS_SPECIAL
-    // 仅保留给「目标并发变成 SuperAdmin」这一竞态场景。
     if (isRequestUser(id.toString())) {
       throw new ErrorException(ErrorExceptionCode.CANNOT_DELETE_SELF);
     }
 
-    // 包事务：保证「条件软删 + 审计」原子性，防止校验通过后、写入前状态漂移，
-    // 与 roles.service.remove 的 $transaction 惯例一致。
+    // 包事务：保证「软删 + 审计」原子性，与 roles.service.remove 的 $transaction 惯例一致。
+    // 设计取舍：放行 SuperAdmin 用户删除——上层 controller 用 @Permission(USER_DELETE)
+    // 守卫，已限制只有持权限者可调用，service 层不再二次拦截角色。
+    // 风险：失去「最后一名 SuperAdmin」保护，若系统最后一个超管被删，需要 SuperAdmin
+    // 的路由（如 updateSpecialRoles）将无人可调用。生产建议在 controller 或单独的
+    // LastSuperAdminGuard 中做计数兜底，而不是混入业务事务。
     return this.prisma.$transaction(async (tx) => {
       try {
-        // 条件 UPDATE：deletedAt IS NULL + 非 SuperAdmin，UPDATE 不匹配即抛 P2025。
-        // ⚠️ specialRoles 是可空字段（schema: String? @db.VarChar(255)），SQL 三值逻辑下
-        // NOT (specialRoles = 'SuperAdmin') 当字段为 NULL 时 → NOT NULL → NULL → WHERE 排除该行，
-        // 会导致「无 specialRoles 的普通用户」被误判为 SuperAdmin 拒绝删除。
-        // 必须用 OR 显式放行 NULL 分支。
+        // 条件 UPDATE：deletedAt IS NULL，UPDATE 不匹配即抛 P2025。
+        // P2025 必然意味着"id 不存在"或"已被并发软删"，不再有「角色被并发改」第三种可能，
+        // 因此 catch 内无需复查 findFirst 区分语义。
         await tx.user.update({
-          where: {
-            id,
-            deletedAt: null,
-            OR: [
-              { specialRoles: null },
-              { specialRoles: { not: SpecialRolesEnum.SuperAdmin } },
-            ],
-          },
+          where: { id, deletedAt: null },
           data: { deletedAt: new Date() },
           select: { id: true },
         });
@@ -600,20 +592,21 @@ export class UsersService {
           e instanceof Prisma.PrismaClientKnownRequestError &&
           e.code === 'P2025'
         ) {
-          // 依赖 MySQL InnoDB 默认 REPEATABLE READ：Prisma $transaction 默认沿用 DB
-          // 默认隔离级别，同一事务内复查复用快照，不引入 UPDATE 之后的新时间窗口。
-          const stillExists = await tx.user.findFirst({
-            where: { id },
-            select: { deletedAt: true, specialRoles: true },
-          });
-          if (!stillExists || stillExists.deletedAt !== null) {
-            throw new ErrorException(ErrorExceptionCode.USER_NOT_FOUND);
-          }
-          // 记录仍存在但被 OR 条件拦住 → 并发把角色改成了 SuperAdmin
-          throw new ErrorException(ErrorExceptionCode.SUPER_ADMIN_IS_SPECIAL);
+          // TOCTOU：调用方传入的 id 不存在或已被并发软删——两种情况对调用方等价。
+          throw new ErrorException(ErrorExceptionCode.USER_NOT_FOUND);
         }
         throw e;
       }
+
+      // 撤销该用户所有未过期的 RefreshToken：防止「人已删、会话仍活」——
+      // access token 是无状态 JWT 无法回收，但 refresh 一旦 revoke 即不可换发新 access，
+      // 等价于「最迟在当前 access 过期后强制下线」。
+      // 软撤销（revokedAt）而非 deleteMany：保留审计轨迹，与 RefreshToken 模型设计一致。
+      // updateMany 对 0 行也成功，无需 try/catch。
+      await tx.refreshToken.updateMany({
+        where: { userId: id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
 
       // 关联表（UserRoles）不物理删——保留可恢复性，
       // 与 roles.service.remove 的策略一致：查询层通过 user.deletedAt 过滤脏数据。
