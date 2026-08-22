@@ -12,6 +12,7 @@ import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { RefreshTokenService } from './refresh-token.service';
+import { AuthExceptionMap, AuthExceptionCode } from '@/common/exceptions/auth.exception';
 import {
   AuthResponseDto,
   LogoutResponseDto,
@@ -22,7 +23,9 @@ import {
 import {
   ApiEnvelope,
   ApiErrorEnvelope,
+  ApiExceptionEnvelope,
 } from '@/common/decorators/api-envelope.decorator';
+
 
 @Controller('auth')
 export class AuthController {
@@ -60,7 +63,7 @@ export class AuthController {
     summary: '登录',
   })
   @ApiEnvelope(AuthResponseDto)
-  @ApiErrorEnvelope(401, '邮箱或密码错误', 'INVALID_CREDENTIALS')
+  @ApiExceptionEnvelope(AuthExceptionMap, AuthExceptionCode.INVALID_CREDENTIALS)
   @Throttle({ default: AUTH_THROTTLE.login })
   @Public()
   @Post('login')
@@ -83,7 +86,7 @@ export class AuthController {
     summary: '用 refresh 换新 access（轮换：旧 refresh 立即作废）',
   })
   @ApiEnvelope(RefreshResponseDto)
-  @ApiErrorEnvelope(401, 'refresh token 无效或已过期', 'INVALID_REFRESH_TOKEN')
+  @ApiExceptionEnvelope(AuthExceptionMap, AuthExceptionCode.INVALID_REFRESH_TOKEN)
   @Throttle({ default: AUTH_THROTTLE.refreshToken })
   @Public()
   @Post('refresh-token')

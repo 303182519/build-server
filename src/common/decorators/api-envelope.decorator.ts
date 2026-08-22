@@ -1,5 +1,6 @@
 import { applyDecorators, type Type } from '@nestjs/common';
 import { ApiExtraModels, ApiResponse, getSchemaPath } from '@nestjs/swagger';
+import { ExceptionInfo } from '@/common/exceptions/base.exception';
 
 // ============================================================================
 // 文档化"统一响应外壳"
@@ -51,4 +52,19 @@ export function ApiErrorEnvelope(
       },
     },
   });
+}
+
+// ============================================================================
+// 失败响应（从 ExceptionMap 派生）
+// ----------------------------------------------------------------------------
+// 用法：@ApiExceptionEnvelope(AuthExceptionMap, AuthExceptionCode.INVALID_REFRESH_TOKEN)
+// 收益：status / message / code 全部由 ExceptionMap 这一单一数据源决定，
+// Swagger 文档示例与运行时抛出的异常严格一致，杜绝手写三参数导致的漂移。
+// ============================================================================
+export function ApiExceptionEnvelope<TCode extends string>(
+  map: Record<TCode, ExceptionInfo>,
+  code: TCode,
+) {
+  const info = map[code];
+  return ApiErrorEnvelope(info.status, info.message, info.code ?? code);
 }
