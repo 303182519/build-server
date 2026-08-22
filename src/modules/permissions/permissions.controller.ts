@@ -42,6 +42,7 @@ export class PermissionsController {
   @ApiOperation({ summary: '创建权限' })
   @ApiEnvelope(PermissionResponseDto, { status: 201, description: '创建成功' })
   @ApiErrorEnvelope(400, '参数校验失败', 'VALIDATION_ERROR')
+  @Permission(PermissionCode.PERMISSION_CREATE)
   @Post()
   create(@Body() createPermissionDto: CreatePermissionDto) {
     return this.permissionsService.create(createPermissionDto);
@@ -92,7 +93,11 @@ export class PermissionsController {
   })
   @idParam
   @ApiEnvelope(PermissionResponseDto)
-  @ApiErrorEnvelope(403, '此接口已被禁用或正在开发中，暂时无法使用', 'ENDPOINT_DISABLED')
+  @ApiErrorEnvelope(
+    403,
+    '此接口已被禁用或正在开发中，暂时无法使用',
+    'ENDPOINT_DISABLED',
+  )
   @ApiExceptionEnvelope(
     PermissionExceptionMap,
     PermissionExceptionCode.PERMISSION_NOT_FOUND,
