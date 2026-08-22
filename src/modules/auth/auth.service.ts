@@ -12,7 +12,6 @@ import { RegisterDto } from './dto/register.dto';
 import { RefreshTokenService } from './refresh-token.service';
 import { LoginAttemptService } from '@/shared/caching/login-attempt.service';
 
-
 // 登录时即使「用户不存在」也跑一次 argon2.verify，让响应耗时和「密码错」一致，
 // 避免攻击者靠响应时间判断邮箱是否注册过（用户枚举 / 时序侧信道）。
 // 这里硬编码一个预生成的合法 argon2 hash（参数与 UsersService.create 对齐：timeCost=5）。
@@ -51,9 +50,8 @@ export class AuthService {
   ) {}
 
   async register(registerDto: RegisterDto) {
-    return await this.usersService.create(registerDto); 
+    return await this.usersService.create(registerDto);
   }
-
 
   async login(dto: LoginDto) {
     // 账号级闸门——锁定优先于一切。已锁就省掉 bcrypt 比对（省 CPU），也避免再泄露信息。
@@ -108,7 +106,14 @@ export class AuthService {
     return { success: true };
   }
 
-  private authResponse(user: UserWithRoles, tokens: { refreshToken: string; accessToken: string; accessExpiresAt: number }) {
+  private authResponse(
+    user: UserWithRoles,
+    tokens: {
+      refreshToken: string;
+      accessToken: string;
+      accessExpiresAt: number;
+    },
+  ) {
     return { ...tokens, user: this.toUserResponse(user) };
   }
 
