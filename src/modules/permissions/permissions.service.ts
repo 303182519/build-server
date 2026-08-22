@@ -10,6 +10,17 @@ import { Prisma } from '@prisma/client';
 import { CreatePermissionDto } from './dto/create-permission.dto';
 import { UpdatePermissionDto } from './dto/update-permission.dto';
 
+// 出口白名单：返回给前端的字段。新增敏感列（如 internalNote）默认不进 allowlist，
+// 杜绝意外泄露。deletedAt 不暴露——前端不应感知软删除实现。
+const permissionSelect = {
+  id: true,
+  name: true,
+  code: true,
+  description: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.PermissionSelect;
+
 @Injectable()
 export class PermissionsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -21,6 +32,7 @@ export class PermissionsService {
         id: BigInt(generateSnowflakeId()),
         ...createPermissionDto,
       },
+      select: permissionSelect,
     });
   }
 
@@ -36,6 +48,7 @@ export class PermissionsService {
   findAll() {
     return this.prisma.permission.findMany({
       where: { deletedAt: null },
+      select: permissionSelect,
     });
   }
 
@@ -50,6 +63,7 @@ export class PermissionsService {
   findOne(id: bigint) {
     return this.prisma.permission.findFirst({
       where: { id, deletedAt: null },
+      select: permissionSelect,
     });
   }
 
@@ -63,6 +77,7 @@ export class PermissionsService {
     return this.prisma.permission.update({
       where: { id },
       data: updatePermissionDto,
+      select: permissionSelect,
     });
   }
 
@@ -77,6 +92,7 @@ export class PermissionsService {
     return this.prisma.permission.update({
       where: { id },
       data: { deletedAt: new Date() },
+      select: permissionSelect,
     });
   }
 }
