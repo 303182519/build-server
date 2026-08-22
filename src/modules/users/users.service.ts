@@ -258,7 +258,7 @@ export class UsersService {
     const user = await this.findOne({ id });
 
     // 如果用户是超级管理员，则不能删除
-    if (user.specialRoles?.includes(SpecialRolesEnum.SuperAdmin)) {
+    if (user.specialRoles === SpecialRolesEnum.SuperAdmin) {
       throw new ErrorException(ErrorExceptionCode.SUPER_ADMIN_IS_SPECIAL);
     }
 
