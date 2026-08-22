@@ -178,43 +178,97 @@ export class RolesService {
   }
 
   async update(id: bigint, updateRoleDto: UpdateRoleDto) {
-    const existing = await this.prisma.role.findFirst({
-      where: { id: id, deletedAt: null },
-      select: { id: true },
-    });
+    // 包事务：保证「存在性 + 系统角色保护 + 权限完整性校验 + 更新」原子性，
+    // 与 create / remove 的 $transaction 惯例一致，防止校验通过后、写入前状态漂移。
+    return this.prisma.$transaction(async (tx) => {
+      // 1. 存在性 + 取 code（用于系统角色判定）
+      const existing = await tx.role.findFirst({
+        where: { id, deletedAt: null },
+        select: { id: true, code: true },
+      });
 
-    if (!existing) {
-      throw new ErrorException(ErrorExceptionCode.ROLE_NOT_FOUND);
-    }
+      if (!existing) {
+        throw new ErrorException(ErrorExceptionCode.ROLE_NOT_FOUND);
+      }
 
-    // 解构：permissions 不走 spread，走 rolePermissions 关联更新
-    const { permissions: permissionCodes, ...roleData } = updateRoleDto;
+      // 2. 系统内置角色保护：super_admin 不可通过通用 update 修改，
+      //    清空其 permissions 会锁死系统，与 remove 的保护策略一致。
+      //    DTO 已 Omit code，无法改 code，但仍可改 permissions，必须拦截。
+      if (existing.code === SpecialRolesEnum.SuperAdmin) {
+        throw new ErrorException(ErrorExceptionCode.ROLE_IS_SYSTEM);
+      }
 
-    // 构造 data：先放基础字段（可能为 undefined 时不写 key）
-    const data: Prisma.RoleUpdateInput = { ...roleData };
+      // 解构：permissions 不走 spread，走 rolePermissions 关联更新
+      const { permissions: permissionCodes, ...roleData } = updateRoleDto;
 
-    if (permissionCodes && permissionCodes.length > 0) {
-      const permissions =
-        await this.permissionsService.findByCodes(permissionCodes);
-      data.rolePermissions = {
+      // 构造 data：先放基础字段（可能为 undefined 时不写 key）
+      const data: Prisma.RoleUpdateInput = { ...roleData };
+
+      // 3. 权限处理：区分 undefined（不更新）/ []（清空）/ [...]（替换）。
+      //    旧代码 `length > 0` 会漏掉显式清空场景，语义错误。
+      if (permissionCodes !== undefined) {
+        // 权限完整性校验：任一 code 找不到即整体失败，
+        // 与 create 的校验对齐，杜绝「以为授 3 个，实际只落 2 个」。
+        // 必须用 tx.permission 而非 this.permissionsService.findByCodes，
+        // 否则脱离事务读不到事务内最新状态（create 也是直接用 tx.permission）。
+        const permissions =
+          permissionCodes.length > 0
+            ? await tx.permission.findMany({
+                where: { code: { in: permissionCodes }, deletedAt: null },
+                select: { id: true },
+              })
+            : [];
+
+        if (permissions.length !== permissionCodes.length) {
+          throw new ErrorException(ErrorExceptionCode.PERMISSION_NOT_FOUND);
+        }
+
         // set 先清再插：语义等价于"用这组权限完全替换旧权限"，
-        // 与旧 TypeORM merge(role, { permissions }) 的覆盖行为一致。
-        set: permissions.map((permission) => ({
-          roleId_permissionId: {
-            roleId: id,
-            permissionId: permission.id,
-          },
-        })),
-      };
-    }
+        // 与旧 TypeORM merge(role, { permissions }) 的覆盖行为一致；
+        // set: [] 即清空所有权限。
+        data.rolePermissions = {
+          set: permissions.map((permission) => ({
+            roleId_permissionId: {
+              roleId: id,
+              permissionId: permission.id,
+            },
+          })),
+        };
+      }
 
-    await this.prisma.role.update({
-      where: { id: id },
-      data,
-      select: { id: true },
+      // 4. 更新 + 捕获 P2025：findFirst 通过后、update 前被并发删除（TOCTOU），
+      //    与 remove 捕获 P2025 的惯例对齐，避免透传 500 暴露实现细节。
+      let updated: Prisma.RoleGetPayload<{ select: typeof roleFullSelect }>;
+      try {
+        updated = await tx.role.update({
+          where: { id },
+          data,
+          select: roleFullSelect,
+        });
+      } catch (e) {
+        if (
+          e instanceof Prisma.PrismaClientKnownRequestError &&
+          e.code === 'P2025'
+        ) {
+          throw new ErrorException(ErrorExceptionCode.ROLE_NOT_FOUND);
+        }
+        throw e;
+      }
+
+      // 5. 操作人审计：与 remove 惯例对齐，记录修改轨迹。
+      try {
+        const operator = useRequestUser();
+        this.logger.log(
+          `Role updated: id=${id}, code=${existing.code}, operator=${operator.id}`,
+        );
+      } catch {
+        this.logger.log(`Role updated: id=${id}, code=${existing.code}`);
+      }
+
+      // 6. 返回更新后的完整角色（含 permissions）：与 create 的返回形状对齐，
+      //    前端无需再发一次 GET 请求；RESTful PATCH 惯例也要求返回更新后资源。
+      return flattenRolePermissions(updated);
     });
-
-    return { success: true };
   }
 
   async remove(id: bigint) {
