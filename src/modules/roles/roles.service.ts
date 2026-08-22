@@ -188,9 +188,7 @@ export class RolesService {
         throw new ErrorException(ErrorExceptionCode.ROLE_NOT_FOUND);
       }
 
-      // 2. 系统内置角色保护：super_admin 不可通过通用 update 修改，
-      //    清空其 permissions 会锁死系统，与 remove 的保护策略一致。
-      //    DTO 已 Omit code，无法改 code，但仍可改 permissions，必须拦截。
+      // 2. 系统内置角色保护
       if (existing.code === RoleCode.ADMIN) {
         throw new ErrorException(ErrorExceptionCode.ROLE_IS_SYSTEM);
       }
@@ -290,10 +288,7 @@ export class RolesService {
         throw new ErrorException(ErrorExceptionCode.ROLE_NOT_FOUND);
       }
 
-      // 2. 系统内置角色保护：super_admin 误删会锁死整个系统，
-      //    与 UsersService.remove 保护 specialRoles 的先例对齐。
-      //    即使上层有 @SpecialRoles 守卫，service 层仍需防御性校验
-      //    （防止非请求路径触发，或超管误操作）。
+      // 2. 系统内置角色保护
       if (role.code === RoleCode.ADMIN) {
         throw new ErrorException(ErrorExceptionCode.ROLE_IS_SYSTEM);
       }
@@ -309,9 +304,19 @@ export class RolesService {
         throw new ErrorException(ErrorExceptionCode.ROLE_IN_USE);
       }
 
-      // 4. 软删：置 deletedAt 保留审计轨迹。
-      //    关联表（UserRoles/RolePermissions）不物理删——保留可恢复性，
-      //    查询层（findByUser/findAll）已通过 role.deletedAt 过滤脏数据。
+      // 4. 级联清理 RolePermissions：物理删，恢复时由管理员显式重配。
+      //    理由：避免恢复后历史权限"幽灵复活"——权限模型可能已重构，
+      //    旧权限复活会形成未被授权的能力授予。
+      //    审计走 Logger 文本（步骤 7），不依赖 RolePermissions.id 作外键，
+      //    物理删无损审计轨迹；deleteMany 对 0 行也成功，无需 try/catch。
+      //
+      //    UserRoles 不在此处理：步骤 3 的 userCount 拦截已保证到达此处时
+      //    无活跃用户绑定（userCount > 0 即抛 ROLE_IN_USE），无需级联。
+      await tx.rolePermissions.deleteMany({ where: { roleId: id } });
+
+      // 5. 软删 Role：置 deletedAt 保留审计轨迹与可恢复性。
+      //    不同于步骤 4 物理删 RolePermissions，Role 主表软删——
+      //    主数据是治理对象，需支持误删恢复与历史审计追溯。
       try {
         await tx.role.update({
           where: { id },
@@ -319,7 +324,7 @@ export class RolesService {
           select: { id: true },
         });
       } catch (e) {
-        // 5. P2025：findFirst 通过后、update 前被并发删除（TOCTOU）。
+        // 6. P2025：findFirst 通过后、update 前被并发删除（TOCTOU）。
         //    与 create 捕获 P2002 转业务错误的惯例对齐，避免透传 500 暴露实现细节。
         if (
           e instanceof Prisma.PrismaClientKnownRequestError &&
@@ -330,20 +335,27 @@ export class RolesService {
         throw e;
       }
 
-      // 6. 操作人审计：项目无 AuditLog 服务，用 Logger 记录最小轨迹。
+      // 7. 操作人审计：项目无 AuditLog 服务，用 Logger 记录最小轨迹。
       //    useRequestUser() 仅在请求生命周期内可用；非请求上下文（如定时任务）
       //    降级仍记角色信息，保证至少有「发生了删除」的可追溯线索。
+      //    日志内容覆盖"软删 Role + 物理删 RolePermissions"两件事，
+      //    作为步骤 4 物理删的间接审计证据（无外键依赖的替代追溯线索）。
       try {
         const operator = useRequestUser();
         this.logger.log(
-          `Role removed: id=${id}, code=${role.code}, operator=${operator.id}`,
+          `Role removed (soft) + RolePermissions purged: id=${id}, code=${role.code}, operator=${operator.id}`,
         );
       } catch {
-        this.logger.log(`Role removed: id=${id}, code=${role.code}`);
+        this.logger.log(
+          `Role removed (soft) + RolePermissions purged: id=${id}, code=${role.code}`,
+        );
       }
 
-      // 返回 id/code：前端/下游日志可关联到被删角色，{success} 单字段信息不足。
-      return { success: true, id, code: role.code };
+      // 返回 id/code/permissionsReset：
+      //   - id/code：前端/下游日志可关联到被删角色，{success} 单字段信息不足。
+      //   - permissionsReset：显式契约——告知"权限已物理清空"，
+      //     恢复时需重配权限，避免下游误以为"原权限还在"导致恢复后出现权限缺口。
+      return { success: true, id, code: role.code, permissionsReset: true };
     });
   }
 }
