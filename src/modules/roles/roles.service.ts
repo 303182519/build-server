@@ -4,11 +4,13 @@ import {
 } from '@/common/exceptions/error.exception';
 import { PrismaService } from '@/shared/database/prisma/prisma.service';
 import { generateSnowflakeId } from '@/shared/utils/snowflake';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PermissionsService } from '../permissions/permissions.service';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
+import { SpecialRolesEnum } from '@/common/decorators/special-roles.decorator';
+import { useRequestUser } from '@/common/context/user-context';
 
 // 出口白名单：不暴露 deletedAt（软删除是实现细节）。
 // permissions 通过 rolePermissions 中间表二次拉取后拍平，
@@ -70,6 +72,8 @@ function flattenRolePermissions<T extends RoleWithPermissionsPayload>(
 
 @Injectable()
 export class RolesService {
+  private readonly logger = new Logger(RolesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly permissionsService: PermissionsService,
@@ -214,22 +218,73 @@ export class RolesService {
   }
 
   async remove(id: bigint) {
-    const existing = await this.prisma.role.findFirst({
-      where: { id: id, deletedAt: null },
-      select: { id: true },
+    // 包事务：保证「存在性 + 系统角色保护 + 引用完整性 + 软删」原子性，
+    // 与 create 的 $transaction 惯例一致，防止校验通过后、写入前状态漂移。
+    return this.prisma.$transaction(async (tx) => {
+      // 1. 存在性 + 取 code（用于系统角色判定与返回值追溯）
+      const role = await tx.role.findFirst({
+        where: { id, deletedAt: null },
+        select: { id: true, code: true },
+      });
+
+      if (!role) {
+        throw new ErrorException(ErrorExceptionCode.ROLE_NOT_FOUND);
+      }
+
+      // 2. 系统内置角色保护：super_admin 误删会锁死整个系统，
+      //    与 UsersService.remove 保护 specialRoles 的先例对齐。
+      //    即使上层有 @SpecialRoles 守卫，service 层仍需防御性校验
+      //    （防止非请求路径触发，或超管误操作）。
+      if (role.code === SpecialRolesEnum.SuperAdmin) {
+        throw new ErrorException(ErrorExceptionCode.ROLE_IS_SYSTEM);
+      }
+
+      // 3. 引用完整性：角色仍被用户持有时禁止软删。
+      //    软删后 findByUser 通过 role.deletedAt 过滤会让用户静默丢权限，
+      //    属「未授权的权限收回」，企业级必须显式拒绝并要求先解绑。
+      const userCount = await tx.userRoles.count({
+        where: { roleId: id },
+      });
+
+      if (userCount > 0) {
+        throw new ErrorException(ErrorExceptionCode.ROLE_IN_USE);
+      }
+
+      // 4. 软删：置 deletedAt 保留审计轨迹。
+      //    关联表（UserRoles/RolePermissions）不物理删——保留可恢复性，
+      //    查询层（findByUser/findAll）已通过 role.deletedAt 过滤脏数据。
+      try {
+        await tx.role.update({
+          where: { id },
+          data: { deletedAt: new Date() },
+          select: { id: true },
+        });
+      } catch (e) {
+        // 5. P2025：findFirst 通过后、update 前被并发删除（TOCTOU）。
+        //    与 create 捕获 P2002 转业务错误的惯例对齐，避免透传 500 暴露实现细节。
+        if (
+          e instanceof Prisma.PrismaClientKnownRequestError &&
+          e.code === 'P2025'
+        ) {
+          throw new ErrorException(ErrorExceptionCode.ROLE_NOT_FOUND);
+        }
+        throw e;
+      }
+
+      // 6. 操作人审计：项目无 AuditLog 服务，用 Logger 记录最小轨迹。
+      //    useRequestUser() 仅在请求生命周期内可用；非请求上下文（如定时任务）
+      //    降级仍记角色信息，保证至少有「发生了删除」的可追溯线索。
+      try {
+        const operator = useRequestUser();
+        this.logger.log(
+          `Role removed: id=${id}, code=${role.code}, operator=${operator.id}`,
+        );
+      } catch {
+        this.logger.log(`Role removed: id=${id}, code=${role.code}`);
+      }
+
+      // 返回 id/code：前端/下游日志可关联到被删角色，{success} 单字段信息不足。
+      return { success: true, id, code: role.code };
     });
-
-    if (!existing) {
-      throw new ErrorException(ErrorExceptionCode.ROLE_NOT_FOUND);
-    }
-
-    // 软删除：置 deletedAt，不物理删除（保留审计轨迹）
-    await this.prisma.role.update({
-      where: { id: id },
-      data: { deletedAt: new Date() },
-      select: { id: true },
-    });
-
-    return { success: true };
   }
 }
