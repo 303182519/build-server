@@ -224,10 +224,10 @@ export class RolesService {
         }
 
         // set 先清再插：语义等价于"用这组权限完全替换旧权限"，
-        // 与旧 TypeORM merge(role, { permissions }) 的覆盖行为一致；
         // set: [] 即清空所有权限。
         data.rolePermissions = {
           set: permissions.map((permission) => ({
+            //  @@id([roleId, permissionId])   // 复合主键
             roleId_permissionId: {
               roleId: id,
               permissionId: permission.id,
