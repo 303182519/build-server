@@ -18,5 +18,3 @@ export class RegisterDto extends OmitType(CreateUserDto, ['roles']) {
   @IsStrongPassword()
   password!: string;
 }
-
-
