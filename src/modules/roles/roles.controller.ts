@@ -1,3 +1,8 @@
+import {
+  ApiEnvelope,
+  ApiErrorEnvelope,
+  ApiExceptionEnvelope,
+} from '@/common/decorators/api-envelope.decorator';
 import { PermissionCode } from '@/common/constants/permissions';
 import { Permission } from '@/common/decorators/permission.decorator';
 import {
@@ -5,6 +10,15 @@ import {
   SpecialRolesEnum,
 } from '@/common/decorators/special-roles.decorator';
 import { SpecialRolesGuard } from '@/common/guards/special-roles.guard';
+import {
+  PermissionExceptionCode,
+  PermissionExceptionMap,
+} from '@/common/exceptions/permission.exception';
+import {
+  RoleExceptionCode,
+  RoleExceptionMap,
+} from '@/common/exceptions/role.exception';
+import { ParseSnowflakePipe } from '@/common/pipes/parse-snowflake.pipe';
 import {
   Body,
   Controller,
@@ -15,11 +29,17 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiParam } from '@nestjs/swagger';
 import { CreateRoleDto } from './dto/create-role.dto';
+import { RoleRemoveResponseDto, RoleResponseDto } from './dto/role-response.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { RolesService } from './roles.service';
-import { ParseSnowflakePipe } from '@/common/pipes/parse-snowflake.pipe';
+
+// 路径参数 :id 的统一文档
+const idParam = ApiParam({
+  name: 'id',
+  description: '角色雪花 ID',
+});
 
 // TODO: 需要思考 Permission 和 SpecialRoles 的冲突关系
 
@@ -32,6 +52,13 @@ export class RolesController {
   @ApiOperation({
     summary: '创建角色',
   })
+  @ApiEnvelope(RoleResponseDto)
+  @ApiErrorEnvelope(400, '参数校验失败', 'VALIDATION_ERROR')
+  @ApiExceptionEnvelope(
+    PermissionExceptionMap,
+    PermissionExceptionCode.PERMISSION_NOT_FOUND,
+  )
+  @ApiExceptionEnvelope(RoleExceptionMap, RoleExceptionCode.ROLE_CODE_EXISTS)
   @Permission(PermissionCode.ROLE_CREATE)
   @SpecialRoles([SpecialRolesEnum.SuperAdmin])
   @Post()
@@ -42,6 +69,7 @@ export class RolesController {
   @ApiOperation({
     summary: '获取所有角色',
   })
+  @ApiEnvelope(RoleResponseDto, { isArray: true })
   @Permission(PermissionCode.ROLE_READ)
   @Get()
   findAll() {
@@ -51,6 +79,8 @@ export class RolesController {
   @ApiOperation({
     summary: '获取角色',
   })
+  @idParam
+  @ApiEnvelope(RoleResponseDto)
   @Permission(PermissionCode.ROLE_READ)
   @Get(':id')
   findOne(@Param('id', ParseSnowflakePipe) id: bigint) {
@@ -60,6 +90,15 @@ export class RolesController {
   @ApiOperation({
     summary: '更新角色',
   })
+  @idParam
+  @ApiEnvelope(RoleResponseDto)
+  @ApiErrorEnvelope(400, '参数校验失败', 'VALIDATION_ERROR')
+  @ApiExceptionEnvelope(RoleExceptionMap, RoleExceptionCode.ROLE_NOT_FOUND)
+  @ApiExceptionEnvelope(RoleExceptionMap, RoleExceptionCode.ROLE_IS_SYSTEM)
+  @ApiExceptionEnvelope(
+    PermissionExceptionMap,
+    PermissionExceptionCode.PERMISSION_NOT_FOUND,
+  )
   @Permission(PermissionCode.ROLE_UPDATE)
   @SpecialRoles([SpecialRolesEnum.SuperAdmin])
   @Patch(':id')
@@ -73,6 +112,11 @@ export class RolesController {
   @ApiOperation({
     summary: '删除角色',
   })
+  @idParam
+  @ApiEnvelope(RoleRemoveResponseDto)
+  @ApiExceptionEnvelope(RoleExceptionMap, RoleExceptionCode.ROLE_NOT_FOUND)
+  @ApiExceptionEnvelope(RoleExceptionMap, RoleExceptionCode.ROLE_IS_SYSTEM)
+  @ApiExceptionEnvelope(RoleExceptionMap, RoleExceptionCode.ROLE_IN_USE)
   @Permission(PermissionCode.ROLE_DELETE)
   @SpecialRoles([SpecialRolesEnum.SuperAdmin])
   @Delete(':id')
