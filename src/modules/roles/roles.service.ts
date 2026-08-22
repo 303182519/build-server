@@ -8,7 +8,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
-import { SpecialRolesEnum } from '@/common/decorators/special-roles.decorator';
+import { RoleCode } from '@/common/constants/roles';
+
 import { useRequestUser } from '@/common/context/user-context';
 
 // 出口白名单：不暴露 deletedAt（软删除是实现细节）。
@@ -73,9 +74,7 @@ function flattenRolePermissions<T extends RoleWithPermissionsPayload>(
 export class RolesService {
   private readonly logger = new Logger(RolesService.name);
 
-  constructor(
-    private readonly prisma: PrismaService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async create(createRoleDto: CreateRoleDto) {
     // 入参去重：避免 ['A','A'] 触发重复 in 查询与语义歧义
@@ -192,7 +191,7 @@ export class RolesService {
       // 2. 系统内置角色保护：super_admin 不可通过通用 update 修改，
       //    清空其 permissions 会锁死系统，与 remove 的保护策略一致。
       //    DTO 已 Omit code，无法改 code，但仍可改 permissions，必须拦截。
-      if (existing.code === SpecialRolesEnum.SuperAdmin) {
+      if (existing.code === RoleCode.ADMIN) {
         throw new ErrorException(ErrorExceptionCode.ROLE_IS_SYSTEM);
       }
 
@@ -295,7 +294,7 @@ export class RolesService {
       //    与 UsersService.remove 保护 specialRoles 的先例对齐。
       //    即使上层有 @SpecialRoles 守卫，service 层仍需防御性校验
       //    （防止非请求路径触发，或超管误操作）。
-      if (role.code === SpecialRolesEnum.SuperAdmin) {
+      if (role.code === RoleCode.ADMIN) {
         throw new ErrorException(ErrorExceptionCode.ROLE_IS_SYSTEM);
       }
 

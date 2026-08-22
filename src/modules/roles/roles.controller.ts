@@ -31,7 +31,10 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam } from '@nestjs/swagger';
 import { CreateRoleDto } from './dto/create-role.dto';
-import { RoleRemoveResponseDto, RoleResponseDto } from './dto/role-response.dto';
+import {
+  RoleRemoveResponseDto,
+  RoleResponseDto,
+} from './dto/role-response.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { RolesService } from './roles.service';
 
