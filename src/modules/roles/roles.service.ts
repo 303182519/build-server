@@ -6,7 +6,6 @@ import { PrismaService } from '@/shared/database/prisma/prisma.service';
 import { generateSnowflakeId } from '@/shared/utils/snowflake';
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { PermissionsService } from '../permissions/permissions.service';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { SpecialRolesEnum } from '@/common/decorators/special-roles.decorator';
@@ -76,7 +75,6 @@ export class RolesService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly permissionsService: PermissionsService,
   ) {}
 
   async create(createRoleDto: CreateRoleDto) {
@@ -209,7 +207,6 @@ export class RolesService {
       if (permissionCodes !== undefined) {
         // 权限完整性校验：任一 code 找不到即整体失败，
         // 与 create 的校验对齐，杜绝「以为授 3 个，实际只落 2 个」。
-        // 必须用 tx.permission 而非 this.permissionsService.findByCodes，
         // 否则脱离事务读不到事务内最新状态（create 也是直接用 tx.permission）。
         const permissions =
           permissionCodes.length > 0
@@ -225,6 +222,15 @@ export class RolesService {
 
         // set 先清再插：语义等价于"用这组权限完全替换旧权限"，
         // set: [] 即清空所有权限。
+        /* 底层其实是这个流程：
+          1. SELECT 现有的 rolePermissions WHERE roleId = ?
+          2. client 端做 diff：
+            - 旧有 + 新无 → 待删
+            - 旧有 + 新有 → 保留（不动）
+            - 旧无 + 新有 → 待插
+          3. DELETE 待删的行（多条或一条 WHERE id IN ...）
+          4. INSERT 待插的行 
+        */
         data.rolePermissions = {
           set: permissions.map((permission) => ({
             //  @@id([roleId, permissionId])   // 复合主键
