@@ -10,7 +10,7 @@ export const validationSchema = Joi.object({
 
   // JWT
   JWT_SECRET: Joi.string().required(),
-  JWT_ACCESS_EXPIRES_IN: Joi.number().default(3600),
+  JWT_ACCESS_EXPIRES_IN: Joi.number().default(900),
   JWT_REFRESH_EXPIRES_IN: Joi.number().default(604800),
 
   // Server

@@ -17,6 +17,10 @@ import {
   AuthExceptionCode,
 } from '@/common/exceptions/auth.exception';
 import {
+  UserExceptionMap,
+  UserExceptionCode,
+} from '@/common/exceptions/user.exception';
+import {
   ApiEnvelope,
   ApiErrorEnvelope,
   ApiExceptionEnvelope,
@@ -40,7 +44,10 @@ export class AuthController {
   })
   @ApiEnvelope(AuthResponseDto)
   @ApiErrorEnvelope(400, '参数校验失败', 'VALIDATION_ERROR')
-  @ApiErrorEnvelope(409, '邮箱 / 用户名已占用', 'EMAIL_TAKEN')
+  @ApiExceptionEnvelope(
+    UserExceptionMap,
+    UserExceptionCode.USER_ALREADY_EXISTS,
+  )
   @Throttle({ default: AUTH_THROTTLE.signup })
   @Public()
   @Post('register')

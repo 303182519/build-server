@@ -8,7 +8,7 @@ export const developmentConfig = registerAs('development', (): AppConfig => ({
   //   // logging: true,
   // },
   jwt: {
-    accessExpiresIn: 60,
-    refreshExpiresIn: 60 * 60,
+    accessExpiresIn: 900,
+    refreshExpiresIn: 604800,
   },
 }));

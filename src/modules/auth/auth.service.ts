@@ -11,6 +11,7 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { RefreshTokenService } from './refresh-token.service';
 import { LoginAttemptService } from '@/shared/caching/login-attempt.service';
+import { Console } from 'console';
 
 // 登录时即使「用户不存在」也跑一次 argon2.verify，让响应耗时和「密码错」一致，
 // 避免攻击者靠响应时间判断邮箱是否注册过（用户枚举 / 时序侧信道）。
@@ -82,10 +83,11 @@ export class AuthService {
     // 必须 try-catch 吞掉异常，否则 DB 中损坏的 hash / 异常栈本身就是枚举信号。
     let ok = false;
     try {
-      ok = await verify(dto.password, user?.password ?? DUMMY_HASH);
+      ok = await verify(user?.password ?? DUMMY_HASH, dto.password);
     } catch {
       ok = false;
     }
+
     if (!user || !ok) {
       // 记一次失败（达阈值即锁）。不区分「用户不存在 / 密码错」——都对同一 email 计数，
       // 否则「不存在的邮箱不计失败」这个差行为本身就成了枚举信号。

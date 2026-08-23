@@ -13,6 +13,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { JwtPayload } from './strategies/jwt-auth.strategy';
 import { randomBytes } from 'crypto';
+import { Console } from 'console';
 
 @Injectable()
 export class RefreshTokenService {
@@ -29,7 +30,6 @@ export class RefreshTokenService {
   ) {
     const payload: JwtPayload = {
       sub: user.id.toString(),
-      type: TokenType.ACCESS,
     };
 
     const { jwt } = getConfig(this.configService);
@@ -39,7 +39,7 @@ export class RefreshTokenService {
     const refreshToken = randomBytes(32).toString('base64url');
     const accessExpiresAt = Date.now() + jwt.accessExpiresIn * 1000;
     const refreshExpiresAt = new Date(Date.now() + jwt.refreshExpiresIn * 1000);
-
+    console.log('jwt.accessExpiresIn', jwt.accessExpiresIn);
     await client.refreshToken.create({
       data: {
         id: BigInt(generateSnowflakeId()),

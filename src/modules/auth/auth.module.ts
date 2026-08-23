@@ -16,7 +16,6 @@ import { JwtAuthStrategy } from './strategies/jwt-auth.strategy';
       imports: [AppConfigModule],
       useFactory: (configService: ConfigService) => {
         const { jwt } = getConfig(configService);
-
         return {
           secret: jwt.secret,
           signOptions: { expiresIn: jwt.accessExpiresIn },

@@ -8,7 +8,9 @@ import { initSnowflake } from './shared/utils/snowflake';
 
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    cors: true,
+  });
 
   // 获取配置
   const appConfig = getAppConfig(app);
