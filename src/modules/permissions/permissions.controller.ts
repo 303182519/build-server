@@ -40,7 +40,7 @@ export class PermissionsController {
   // 暂时应该不暴露创建权限的接口，权限似乎应该与程序一起发布和同步
   // @DisabledEndpoint()
   @ApiOperation({ summary: '创建权限' })
-  @ApiEnvelope(PermissionResponseDto, { status: 201, description: '创建成功' })
+  @ApiEnvelope(PermissionResponseDto)
   @ApiErrorEnvelope(400, '参数校验失败', 'VALIDATION_ERROR')
   @Permission(PermissionCode.PERMISSION_CREATE)
   @Post()
