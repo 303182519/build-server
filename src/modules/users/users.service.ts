@@ -269,14 +269,9 @@ export class UsersService {
     };
   }
 
-  /**
-   * 公共 findOne：与旧 TypeORM 版签名保持形状兼容——
-   * criteria 目前只消费 `id`（controller / jwt-auth.strategy 都传 { id }）。
-   * relations 旧版传 { roles: true }，新版用 `includeRoles` 语义。
-   */
   async findOne(
-    criteria: { id?: string | bigint; username?: string; email?: string },
-    relations?: { roles?: boolean } | string[] | Prisma.UserInclude,
+    criteria: { id?: bigint; username?: string; email?: string },
+    relations?: Prisma.UserInclude,
   ): Promise<any> {
     const includeRoles =
       typeof relations === 'object' &&
@@ -284,16 +279,9 @@ export class UsersService {
       'roles' in relations &&
       (relations as { roles?: boolean }).roles === true;
 
-    let prismaId: bigint | undefined;
-    if (criteria.id !== undefined) {
-      prismaId =
-        typeof criteria.id === 'bigint'
-          ? criteria.id
-          : toBigIntId(criteria.id as string);
-    }
 
     const where: Prisma.UserWhereInput = { deletedAt: null };
-    if (prismaId !== undefined) where.id = prismaId;
+    if (criteria.id) where.id = criteria.id;
     if (criteria.username) where.username = criteria.username;
     if (criteria.email) where.email = criteria.email;
 
