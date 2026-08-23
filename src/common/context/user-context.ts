@@ -22,5 +22,5 @@ export const useRequestUser = (): User => {
 };
 
 export const isRequestUser = (userId: string) => {
-  return userId === useRequestUser().id;
+  return userId === useRequestUser().id.toString();
 };
