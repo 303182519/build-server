@@ -13,17 +13,7 @@ export const useSwagger = (app: INestApplication) => {
     .setTitle(swaggerConfig.title)
     .setDescription(swaggerConfig.description)
     .setVersion(swaggerConfig.version)
-    .addBearerAuth(
-      {
-        type: 'http',
-        scheme: 'bearer',
-        bearerFormat: 'JWT',
-        name: 'Authorization',
-        description: '请输入Token，不需要Bearer前缀',
-        in: 'header',
-      },
-      'access-token', // 授权名称，后面控制器使用
-    )
+    .addBearerAuth()
     .build();
 
   const document = SwaggerModule.createDocument(app, config);

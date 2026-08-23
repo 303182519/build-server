@@ -34,7 +34,6 @@ export class CreateUserDto {
   })
   username!: string;
 
-  @IsString()
   @IsNotEmpty({ message: 'password 不能为空' })
   @MinLength(8, { message: 'password 至少 8 位' })
   password!: string;
