@@ -6,6 +6,7 @@ export const UserExceptionCode = {
   USER_ALREADY_EXISTS: '11402',
   NEW_PASSWORD_SAME_AS_OLD: '11403',
   SUPER_ADMIN_IS_SPECIAL: '11404',
+  CANNOT_DELETE_SELF: '11405',
 } as const;
 
 export type UserExceptionCode =
@@ -31,5 +32,10 @@ export const UserExceptionMap: Record<UserExceptionCode, ExceptionInfo> = {
     message: '超级管理员十分特殊喔',
     status: HttpStatus.BAD_REQUEST,
     code: UserExceptionCode.SUPER_ADMIN_IS_SPECIAL,
+  },
+  [UserExceptionCode.CANNOT_DELETE_SELF]: {
+    message: '不能删除当前登录用户',
+    status: HttpStatus.BAD_REQUEST,
+    code: UserExceptionCode.CANNOT_DELETE_SELF,
   },
 };
