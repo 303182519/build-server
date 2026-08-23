@@ -590,15 +590,19 @@ export class UsersService {
         }
         roleIds = foundRoles;
       }
-
       try {
         const updated = await tx.user.update({
           where: { id },
           data: {
+            // 替换语义：deleteMany 清空当前用户所有 user_roles 关联行，
+            // create 再批量插入新关联（连接到已存在的 Role）。
+            // ❌ 不能用 set: [{ userId_roleId: {...} }]——显式 m-n 复合主键场景下
+            //    set 只会"保留已存在 + 删除不在集合里的"，不会 INSERT 不存在的关联行，
+            //    导致首次给用户分配角色时静默失败、roles: [] 返回。
+            //    官方文档对显式 m-n 也只演示 create，没有 set 的示例。
             roles: {
-              set: roleIds.map((r) => ({
-                userId_roleId: { userId: id, roleId: r.id },
-              })),
+              deleteMany: {},
+              create: roleIds.map((r) => ({ roleId: r.id })),
             },
           },
           select: userWithRolesSelect,
