@@ -17,8 +17,16 @@ import { BaseException } from '../exceptions/base.exception';
  * 接口权限控制仅限 developer Role 使用
  */
 
-/** 匹配 JSON 解析错误信息（V8 的 JSON.parse 抛出的 SyntaxError 文案） */
-const JSON_PARSE_ERROR_REGEX = /in JSON at position|end of JSON input/i;
+/**
+ * 匹配 JSON 解析错误信息
+ * 覆盖多种 V8 / body-parser 可能抛出的 SyntaxError 文案格式：
+ * 1. 老版本："Unexpected token x in JSON at position N"
+ * 2. 新版本："Unexpected token 'x', ... is not valid JSON"
+ * 3. 输入不完整："Unexpected end of JSON input"
+ * 4. 期望字符："Expected ':' after property name in JSON at position N"
+ */
+const JSON_PARSE_ERROR_REGEX =
+  /in JSON at position|end of JSON input|is not valid JSON|Unexpected token/i;
 
 /**
  * 判断异常是否为请求体 JSON 解析错误
