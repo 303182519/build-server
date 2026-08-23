@@ -7,6 +7,14 @@ interface FieldError {
   messages: string[];
 }
 
+// 去掉消息开头重复的字段名前缀："username 长度必须在..." → "长度必须在..."
+function stripFieldPrefix(messages: string[], property: string): string[] {
+  const prefix = `${property} `;
+  return messages.map((msg) =>
+    msg.startsWith(prefix) ? msg.slice(prefix.length) : msg,
+  );
+}
+
 // 把嵌套 DTO 的校验错误压平：errors[i].children[j].constraints → { field: 'a.b', messages: [...] }
 function flattenErrors(
   errors: ValidationError[],
@@ -15,7 +23,15 @@ function flattenErrors(
   return errors.flatMap((err) => {
     const path = parentPath ? `${parentPath}.${err.property}` : err.property;
     const own: FieldError[] = err.constraints
-      ? [{ field: path, messages: Object.values(err.constraints) }]
+      ? [
+          {
+            field: path,
+            messages: stripFieldPrefix(
+              Object.values(err.constraints),
+              err.property,
+            ),
+          },
+        ]
       : [];
     const children = err.children?.length
       ? flattenErrors(err.children, path)

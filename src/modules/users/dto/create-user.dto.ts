@@ -27,8 +27,7 @@ export class CreateUserDto {
     description: '只能含字母 / 数字 / 下划线 / 连字符',
     example: 'alice',
   })
-  @IsString()
-  @Length(3, 50)
+  @Length(3, 50 , { message: 'username 长度必须在 3 到 50 之间' })
   @Matches(/^[a-zA-Z0-9_-]+$/, {
     message: 'username 只能含字母/数字/下划线/连字符',
   })
