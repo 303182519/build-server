@@ -67,32 +67,67 @@ export class PermissionsService {
     });
   }
 
-  async update(id: bigint, updatePermissionDto: UpdatePermissionDto) {
-    const permission = await this.findOne(id);
-
-    if (!permission) {
-      throw new ErrorException(ErrorExceptionCode.PERMISSION_NOT_FOUND);
+  async update(
+    id: bigint,
+    updatePermissionDto: UpdatePermissionDto,
+  ): Promise<Prisma.PermissionGetPayload<{ select: typeof permissionSelect }>> {
+    try {
+      // 单次 round-trip：where 显式加 deletedAt: null 保证与 findOne 过滤口径一致，
+      // 避免 TOCTOU：预查通过后、update 执行前记录被并发软删
+      return await this.prisma.permission.update({
+        where: { id, deletedAt: null },
+        data: updatePermissionDto,
+        select: permissionSelect,
+      });
+    } catch (e) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2025'
+      ) {
+        // 记录不存在 或 已被软删（防御并发 TOCTOU）
+        throw new ErrorException(ErrorExceptionCode.PERMISSION_NOT_FOUND);
+      }
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        // 唯一索引冲突：精确区分 name / code（schema 中两者均为 @unique）
+        const target = (e.meta?.target as unknown[]) ?? [];
+        if (target.includes('name')) {
+          throw new ErrorException(
+            ErrorExceptionCode.PERMISSION_NAME_ALREADY_EXISTS,
+          );
+        }
+        if (target.includes('code')) {
+          throw new ErrorException(
+            ErrorExceptionCode.PERMISSION_CODE_ALREADY_EXISTS,
+          );
+        }
+        throw new ErrorException(ErrorExceptionCode.PERMISSION_NOT_FOUND);
+      }
+      throw e;
     }
-
-    return this.prisma.permission.update({
-      where: { id },
-      data: updatePermissionDto,
-      select: permissionSelect,
-    });
   }
 
-  async remove(id: bigint) {
-    const permission = await this.findOne(id);
-
-    if (!permission) {
-      throw new ErrorException(ErrorExceptionCode.PERMISSION_NOT_FOUND);
+  async remove(
+    id: bigint,
+  ): Promise<Prisma.PermissionGetPayload<{ select: typeof permissionSelect }>> {
+    try {
+      // 与 update 保持一致：deletedAt: null 进 where，杜绝把已软删记录再删一次
+      // （软删除幂等性层面虽然危害较小，但语义上"删不存在的东西"应返回 404）
+      return await this.prisma.permission.update({
+        where: { id, deletedAt: null },
+        data: { deletedAt: new Date() },
+        select: permissionSelect,
+      });
+    } catch (e) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2025'
+      ) {
+        throw new ErrorException(ErrorExceptionCode.PERMISSION_NOT_FOUND);
+      }
+      throw e;
     }
-
-    // 软删除：置 deletedAt，不物理删除（保留审计轨迹）
-    return this.prisma.permission.update({
-      where: { id },
-      data: { deletedAt: new Date() },
-      select: permissionSelect,
-    });
   }
 }
