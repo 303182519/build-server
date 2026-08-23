@@ -317,18 +317,19 @@ export class UsersService {
   }
 
   updateProfile(updateProfileDto: UpdateUserDto) {
-    const userId = useRequestUser().id as bigint;
-    return this.update(userId.toString(), updateProfileDto);
+    const userId = useRequestUser().id;
+    return this.update(userId, updateProfileDto);
   }
 
   async update(
-    id: string,
+    id: bigint,
     updateUserDto: UpdateUserDto,
   ): Promise<UserBasePayload> {
-    const prismaId = toBigIntId(id);
+
+
 
     const user = await this.prisma.user.findFirst({
-      where: { id: prismaId, deletedAt: null },
+      where: { id, deletedAt: null },
       select: { id: true, username: true },
     });
 
@@ -351,10 +352,10 @@ export class UsersService {
     if (sanitized.username || sanitized.email) {
       const OR: Prisma.UserWhereInput[] = [];
       if (sanitized.username) {
-        OR.push({ username: sanitized.username, id: { not: prismaId } });
+        OR.push({ username: sanitized.username, id: { not: id } });
       }
       if (sanitized.email) {
-        OR.push({ email: sanitized.email, id: { not: prismaId } });
+        OR.push({ email: sanitized.email, id: { not: id } });
       }
 
       const exist = await this.prisma.user.findFirst({
@@ -369,7 +370,7 @@ export class UsersService {
 
     try {
       const updated = await this.prisma.user.update({
-        where: { id: prismaId },
+        where: { id },
         data: sanitized,
         select: userBaseSelect,
       });
@@ -394,16 +395,16 @@ export class UsersService {
   }
 
   async updateUserSpecialRoles(
-    id: string,
+    id: bigint,
     { roles }: UpdateUserSpecialRolesDto,
   ): Promise<UserBasePayload> {
     // 不能修改自己的角色，除非是默认超级管理员
-    const isSelf = isRequestUser(id);
+    const isSelf = isRequestUser(id.toString());
 
-    const prismaId = toBigIntId(id);
+
 
     const user = await this.prisma.user.findFirst({
-      where: { id: prismaId, deletedAt: null },
+      where: { id, deletedAt: null },
       select: { id: true, username: true },
     });
 
@@ -421,7 +422,7 @@ export class UsersService {
 
     try {
       return this.prisma.user.update({
-        where: { id: prismaId },
+        where: { id },
         data: { specialRoles: specialRolesFromDto(roles) },
         select: userBaseSelect,
       });
@@ -437,14 +438,13 @@ export class UsersService {
   }
 
   async updateUserRoles(
-    id: string,
+    id: bigint,
     { roles }: UpdateUserRolesDto,
   ): Promise<UserWithFlatRoles> {
-    const prismaId = toBigIntId(id);
 
     // 存在性先验：后面要用事务 tx 做角色校验，减少外层往返次数也便于统一错误出口
     const existing = await this.prisma.user.findFirst({
-      where: { id: prismaId, deletedAt: null },
+      where: { id, deletedAt: null },
       select: { id: true },
     });
     if (!existing) {
@@ -468,11 +468,11 @@ export class UsersService {
 
       try {
         const updated = await tx.user.update({
-          where: { id: prismaId },
+          where: { id },
           data: {
             roles: {
               set: roleIds.map((r) => ({
-                userId_roleId: { userId: prismaId, roleId: r.id },
+                userId_roleId: { userId: id, roleId: r.id },
               })),
             },
           },
