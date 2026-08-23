@@ -269,41 +269,52 @@ export class UsersService {
     };
   }
 
-  async findOne(
+  /**
+   * 按 id / username / email 查询单个未软删用户，找不到即抛 USER_NOT_FOUND。
+   *
+   * 语义约定：
+   *   - 多条件同时传入时按 AND 过滤，用于交叉校验（如「id + username 必须同时匹配」）。
+   *   - 空 criteria 会被拦截：where 仅剩 deletedAt: null 时 findFirst 会命中任意未删用户
+   *     （通常是默认超管），属于静默越权，故按 USER_NOT_FOUND 等价处理。
+   *   - 不区分「id 不存在」与「已被软删」，避免信息泄露。
+   *
+   * @param criteria 至少传一个字段。
+   * @param relations 传 { roles: true } 时返回拍平后的 roles 数组；省略时仅返回 base 字段。
+   */
+  async findOneOrThrow(
     criteria: { id?: bigint; username?: string; email?: string },
-    relations?: Prisma.UserInclude,
-  ): Promise<any> {
-    const includeRoles =
-      typeof relations === 'object' &&
-      relations !== null &&
-      'roles' in relations &&
-      (relations as { roles?: boolean }).roles === true;
-
+    relations?: { roles?: boolean },
+  ): Promise<UserWithFlatRoles | UserBasePayload> {
+    if (
+      criteria.id === undefined &&
+      !criteria.username &&
+      !criteria.email
+    ) {
+      throw new ErrorException(ErrorExceptionCode.USER_NOT_FOUND);
+    }
 
     const where: Prisma.UserWhereInput = { deletedAt: null };
-    if (criteria.id) where.id = criteria.id;
+    // 用 !== undefined 而非 falsy 判断：bigint 0n 不应被跳过（虽然雪花 ID 不会为 0）。
+    if (criteria.id !== undefined) where.id = criteria.id;
     if (criteria.username) where.username = criteria.username;
     if (criteria.email) where.email = criteria.email;
 
-    if (includeRoles) {
-      const user = await this.prisma.user.findFirst({
-        where,
-        select: userWithRolesSelect,
-      });
-      if (!user) {
-        throw new ErrorException(ErrorExceptionCode.USER_NOT_FOUND);
-      }
-      return flattenUserRoles(user);
-    }
+    const includeRoles = relations?.roles === true;
 
-    const user = await this.prisma.user.findFirst({
+    // Prisma findFirst 在 select 为三元时无法基于运行时分支收窄返回类型，
+    // 需根据 includeRoles 显式断言为对应 payload 类型。
+    const user = (await this.prisma.user.findFirst({
       where,
-      select: userBaseSelect,
-    });
+      select: includeRoles ? userWithRolesSelect : userBaseSelect,
+    })) as UserWithRolesPayload | UserBasePayload | null;
+
     if (!user) {
       throw new ErrorException(ErrorExceptionCode.USER_NOT_FOUND);
     }
-    return user;
+
+    return includeRoles
+      ? flattenUserRoles(user as UserWithRolesPayload)
+      : user;
   }
 
   updateProfile(updateProfileDto: UpdateUserDto) {
