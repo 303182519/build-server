@@ -140,14 +140,12 @@ export class RolesService {
     });
   }
 
-  findByUser(userId: string) {
-    // userId 来自 controller / useRequestUser，为字符串形式的雪花 ID；
-    // Prisma UserRoles.userId 为 BigInt，需在此转换。
+  findByUser(userId: bigint) {
     return this.prisma.role.findMany({
       where: {
         users: {
           some: {
-            userId: BigInt(userId),
+            userId: userId,
           },
         },
         deletedAt: null,
