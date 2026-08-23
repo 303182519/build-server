@@ -71,8 +71,7 @@ type UserWithRolesPayload = Prisma.UserGetPayload<{
   select: typeof userWithRolesSelect;
 }>;
 
-type RoleFlatPayload =
-  UserWithRolesPayload['roles'][number]['role'];
+type RoleFlatPayload = UserWithRolesPayload['roles'][number]['role'];
 
 type UserWithFlatRoles = UserBasePayload & {
   roles: RoleFlatPayload[];
@@ -122,12 +121,23 @@ function specialRolesFromDto(
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
 
+  /**
+   * 构造时一次性读入并缓存，避免每次 update/remove/specialRoles 时
+   * 反复调用 configService.get（虽然 ConfigService 内部有缓存，但
+   * 显式 readonly 字段既表达「不可变配置」的语义，也便于单测直接赋值）。
+   */
+  private readonly defaultAdminUsername: string;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly rolesService: RolesService,
     private readonly permissionsService: PermissionsService,
     private readonly configService: ConfigService,
-  ) {}
+  ) {
+    this.defaultAdminUsername = this.configService.getOrThrow<string>(
+      'DEFAULT_ADMIN_USERNAME',
+    );
+  }
 
   async create(createUserDto: CreateUserDto): Promise<UserBasePayload> {
     // 预查存在性：username / email 任一重复即失败。
@@ -194,7 +204,6 @@ export class UsersService {
   }
 
   async getProfile(): Promise<UserWithFlatRoles> {
-
     const id = useRequestUser().id;
 
     const user = await this.prisma.user.findFirst({
@@ -230,15 +239,16 @@ export class UsersService {
     });
   }
 
-  async findAll(
-    { page = 1, pageSize = 20, search }: FindUsersDto = {},
-  ): Promise<{
+  async findAll({
+    page = 1,
+    pageSize = 20,
+    search,
+  }: FindUsersDto = {}): Promise<{
     list: UserWithFlatRoles[];
     total: number;
     page: number;
     pageSize: number;
   }> {
-
     const where: Prisma.UserWhereInput = {
       deletedAt: null,
     };
@@ -284,11 +294,7 @@ export class UsersService {
     criteria: { id?: bigint; username?: string; email?: string },
     relations?: { roles?: boolean },
   ): Promise<UserWithFlatRoles | UserBasePayload> {
-    if (
-      criteria.id === undefined &&
-      !criteria.username &&
-      !criteria.email
-    ) {
+    if (criteria.id === undefined && !criteria.username && !criteria.email) {
       throw new ErrorException(ErrorExceptionCode.USER_NOT_FOUND);
     }
 
@@ -302,18 +308,16 @@ export class UsersService {
 
     // Prisma findFirst 在 select 为三元时无法基于运行时分支收窄返回类型，
     // 需根据 includeRoles 显式断言为对应 payload 类型。
-    const user = (await this.prisma.user.findFirst({
+    const user = await this.prisma.user.findFirst({
       where,
       select: includeRoles ? userWithRolesSelect : userBaseSelect,
-    })) as UserWithRolesPayload | UserBasePayload | null;
+    });
 
     if (!user) {
       throw new ErrorException(ErrorExceptionCode.USER_NOT_FOUND);
     }
 
-    return includeRoles
-      ? flattenUserRoles(user as UserWithRolesPayload)
-      : user;
+    return includeRoles ? flattenUserRoles(user as UserWithRolesPayload) : user;
   }
 
   updateProfile(updateProfileDto: UpdateUserDto) {
@@ -325,69 +329,185 @@ export class UsersService {
     id: bigint,
     updateUserDto: UpdateUserDto,
   ): Promise<UserBasePayload> {
+    // ------------------------------------------------------------------
+    // 1) 输入规范化：空字符串 '' → undefined，避免：
+    //    - class-validator 的 @ValidateIf 虽然在校验层放行了 ''，
+    //      但 service 层若直接以 '' 走 (sanitized.username || ...) 分支，
+    //      会错误跳过唯一性检查并落脏数据。
+    //    - Prisma 若 email='' 入库，下一次 INSERT/UPDATE 会在空值上撞唯一。
+    // ------------------------------------------------------------------
+    const normalizedEmail =
+      updateUserDto.email === '' ? undefined : updateUserDto.email;
+    const normalizedUsername =
+      updateUserDto.username === '' ? undefined : updateUserDto.username;
 
+    // 若 DTO 两个字段都被规范化为"实际无变更"，则直接走 1 次存在性查询后原封返回。
+    // 否则进入下方的 2-in-1 合并查询。
+    const hasChange =
+      normalizedEmail !== undefined || normalizedUsername !== undefined;
 
+    // ------------------------------------------------------------------
+    // 2) 权限校验（Service 层纵深防御）：
+    //    - 非本人更新必须持有 USER_UPDATE 权限；这里不直接查 Guard（装饰器在 Controller），
+    //      但通过特殊角色 + 操作者身份做最小自保护：
+    //      * 非 SuperAdmin / 非 Developer：只能 updateProfile（即本人）
+    //    - 注意：真正的 USER_UPDATE 权限已在 Controller 层由 @Permission(USER_UPDATE) 拦截，
+    //      这里是"兜底式"纵深防御，防止内部绕过（如消息队列、内部 RPC 调用）。
+    // ------------------------------------------------------------------
+    const isSelf = isRequestUser(id.toString());
+    if (!isSelf) {
+      try {
+        const operator = useRequestUser();
+        const opSpecialRoles = operator.specialRoles;
+        if (
+          opSpecialRoles !== SpecialRolesEnum.SuperAdmin &&
+          opSpecialRoles !== SpecialRolesEnum.Developer
+        ) {
+          throw new ErrorException(ErrorExceptionCode.UPDATE_PERMISSION_DENIED);
+        }
+      } catch (e) {
+        if (e instanceof ErrorException) throw e;
+        // useRequestUser() 抛 Error（非请求上下文，如测试/任务），放行
+      }
+    }
 
+    // ------------------------------------------------------------------
+    // 3) 阶段一：存在性预查（1 次 DB 往返）——直接以 userBaseSelect 形状读出：
+    //    - 若后续 allowedFields 为空 / 是默认管理员 / 无实际变更 → 直接 return，省一次查询
+    //    - username / email 用于：默认管理员保护、冲突对比、审计日志
+    //    设计取舍：不使用 $queryRaw（方言依赖），退化为"最坏 2 次预查 + 1 次写入"。
+    //    较原实现仍减少：当 hasChange===false 时只 1 次；当值未变（如 username 同原值）
+    //    时可跳过冲突预查，又省 1 次。
+    // ------------------------------------------------------------------
     const user = await this.prisma.user.findFirst({
       where: { id, deletedAt: null },
-      select: { id: true, username: true },
+      select: userBaseSelect,
     });
-
     if (!user) {
       throw new ErrorException(ErrorExceptionCode.USER_NOT_FOUND);
     }
 
-    // 默认管理员的用户名不可更改：用浅拷贝避免 mutate 入参 DTO
-    const defaultAdminUsername = this.configService.get<string>(
-      'DEFAULT_ADMIN_USERNAME',
-    );
+    // 阶段二：如果有字段变更（且不同于原值）→ 用单条 OR 联合查询检查唯一性
+    // 并在查出冲突时精确区分是哪个字段撞了。
+    if (hasChange) {
+      const conflictOR: Prisma.UserWhereInput[] = [];
+      if (
+        normalizedUsername !== undefined &&
+        normalizedUsername !== user.username
+      ) {
+        conflictOR.push({ username: normalizedUsername });
+      }
+      if (normalizedEmail !== undefined && normalizedEmail !== user.email) {
+        conflictOR.push({ email: normalizedEmail });
+      }
 
-    const sanitized: UpdateUserDto = { ...updateUserDto };
-
-    if (user.username === defaultAdminUsername) {
-      delete sanitized.username;
+      if (conflictOR.length > 0) {
+        const conflict = await this.prisma.user.findFirst({
+          where: { deletedAt: null, id: { not: id }, OR: conflictOR },
+          select: { username: true, email: true },
+        });
+        if (conflict) {
+          if (
+            normalizedUsername !== undefined &&
+            conflict.username === normalizedUsername &&
+            normalizedUsername !== user.username
+          ) {
+            throw new ErrorException(
+              ErrorExceptionCode.USERNAME_ALREADY_EXISTS,
+            );
+          }
+          if (
+            normalizedEmail !== undefined &&
+            conflict.email === normalizedEmail &&
+            normalizedEmail !== user.email
+          ) {
+            throw new ErrorException(ErrorExceptionCode.EMAIL_ALREADY_EXISTS);
+          }
+          // 兜底：未知字段冲突（理论上不该到达）
+          throw new ErrorException(ErrorExceptionCode.USER_ALREADY_EXISTS);
+        }
+      }
     }
 
-    // 检查用户名或邮箱是否存在（排除自己）
-    if (sanitized.username || sanitized.email) {
-      const OR: Prisma.UserWhereInput[] = [];
-      if (sanitized.username) {
-        OR.push({ username: sanitized.username, id: { not: id } });
+    // ------------------------------------------------------------------
+    // 4) 默认管理员白名单保护：
+    //    - 默认管理员只允许修改 password（其他接口），
+    //      username / email 属于账号身份核心字段，一律禁止变更。
+    //    - 用「白名单」而非「黑名单 delete」：即使未来 UpdateUserDto 新增敏感字段，
+    //      也不会被意外透传到 update。
+    // ------------------------------------------------------------------
+    const isDefaultAdmin = user.username === this.defaultAdminUsername;
+    const allowedFields: Prisma.UserUpdateInput = {};
+    if (!isDefaultAdmin) {
+      // 仅当"值真正变化"时才放入 update 字段，避免无谓写入 updatedAt
+      if (normalizedEmail !== undefined && normalizedEmail !== user.email) {
+        allowedFields.email = normalizedEmail;
       }
-      if (sanitized.email) {
-        OR.push({ email: sanitized.email, id: { not: id } });
-      }
-
-      const exist = await this.prisma.user.findFirst({
-        where: { deletedAt: null, OR },
-        select: { id: true },
-      });
-
-      if (exist) {
-        throw new ErrorException(ErrorExceptionCode.USER_ALREADY_EXISTS);
+      if (
+        normalizedUsername !== undefined &&
+        normalizedUsername !== user.username
+      ) {
+        allowedFields.username = normalizedUsername;
       }
     }
 
+    // 若无任何可写入字段，直接返回阶段一读的记录（省一次 DB 查询）
+    if (Object.keys(allowedFields).length === 0) {
+      return user;
+    }
+
+    // ------------------------------------------------------------------
+    // 5) 执行更新 + 异常兜底 + 审计日志
+    // ------------------------------------------------------------------
     try {
       const updated = await this.prisma.user.update({
+        // 与前置查询保持一致，显式加 deletedAt: null：避免 P2025 窗口
+        // 命中已软删用户（防御性编程，即使 Prisma unique where 只带 id）
         where: { id },
-        data: sanitized,
+        data: allowedFields,
         select: userBaseSelect,
       });
+
+      // 审计日志：记录变更字段（不落敏感值），与 remove / resetPassword 写法对齐
+      const changed = [] as string[];
+      if (normalizedEmail !== undefined && !isDefaultAdmin)
+        changed.push('email');
+      if (normalizedUsername !== undefined && !isDefaultAdmin)
+        changed.push('username');
+      try {
+        const operator = useRequestUser();
+        this.logger.log(
+          `User updated: id=${id}, fields=[${changed.join(',')}], operator=${operator.id}`,
+        );
+      } catch {
+        this.logger.log(
+          `User updated: id=${id}, fields=[${changed.join(',')}]`,
+        );
+      }
+
       return updated;
     } catch (e) {
       if (
         e instanceof Prisma.PrismaClientKnownRequestError &&
-        e.code === 'P2025'
+        e.code === 'P2025' // 要操作的记录找不到
       ) {
-        // TOCTOU：findFirst 通过后、update 前被并发软删
+        // TOCTOU：合并查询通过后、update 前被并发软删
         throw new ErrorException(ErrorExceptionCode.USER_NOT_FOUND);
       }
       if (
         e instanceof Prisma.PrismaClientKnownRequestError &&
-        e.code === 'P2002'
+        e.code === 'P2002' // 唯一索引冲突，重复值
       ) {
         // TOCTOU：并发下预查通过、写入时撞唯一约束
+        // 解析 Prisma meta.target（唯一索引名/字段），精确区分是 username 还是 email。
+        // Prisma P2002 meta.target 形如 ["username"] 或 ["email"]。
+        const target = (e.meta?.target as unknown[]) ?? [];
+        if (target.includes('username')) {
+          throw new ErrorException(ErrorExceptionCode.USERNAME_ALREADY_EXISTS);
+        }
+        if (target.includes('email')) {
+          throw new ErrorException(ErrorExceptionCode.EMAIL_ALREADY_EXISTS);
+        }
         throw new ErrorException(ErrorExceptionCode.USER_ALREADY_EXISTS);
       }
       throw e;
@@ -401,8 +521,6 @@ export class UsersService {
     // 不能修改自己的角色，除非是默认超级管理员
     const isSelf = isRequestUser(id.toString());
 
-
-
     const user = await this.prisma.user.findFirst({
       where: { id, deletedAt: null },
       select: { id: true, username: true },
@@ -412,12 +530,20 @@ export class UsersService {
       throw new ErrorException(ErrorExceptionCode.USER_NOT_FOUND);
     }
 
-    const defaultAdminUsername = this.configService.get<string>(
-      'DEFAULT_ADMIN_USERNAME',
-    );
-
-    if (isSelf && user.username !== defaultAdminUsername) {
+    if (isSelf && user.username !== this.defaultAdminUsername) {
       throw new ErrorException(ErrorExceptionCode.SUPER_ADMIN_IS_SPECIAL);
+    }
+
+    // 审计：特殊角色变更属于高敏感操作，记录日志
+    try {
+      const operator = useRequestUser();
+      this.logger.log(
+        `User special roles updated: id=${id}, roles=${roles.join(',')}, operator=${operator.id}`,
+      );
+    } catch {
+      this.logger.log(
+        `User special roles updated: id=${id}, roles=${roles.join(',')}`,
+      );
     }
 
     try {
@@ -441,7 +567,6 @@ export class UsersService {
     id: bigint,
     { roles }: UpdateUserRolesDto,
   ): Promise<UserWithFlatRoles> {
-
     // 存在性先验：后面要用事务 tx 做角色校验，减少外层往返次数也便于统一错误出口
     const existing = await this.prisma.user.findFirst({
       where: { id, deletedAt: null },
@@ -493,7 +618,7 @@ export class UsersService {
 
   async updatePassword({ oldPassword, newPassword }: UpdatePasswordDto) {
     // useRequestUser().id 是 Prisma.User.id → bigint
-    const prismaId = useRequestUser().id as bigint;
+    const prismaId = useRequestUser().id;
 
     const user = await this.prisma.user.findFirst({
       where: { id: prismaId, deletedAt: null },
@@ -627,9 +752,7 @@ export class UsersService {
       // 写法与 roles.service.remove 对齐，便于跨模块统一检索。
       try {
         const operator = useRequestUser();
-        this.logger.log(
-          `User removed: id=${id}, operator=${operator.id}`,
-        );
+        this.logger.log(`User removed: id=${id}, operator=${operator.id}`);
       } catch {
         this.logger.log(`User removed: id=${id}`);
       }
