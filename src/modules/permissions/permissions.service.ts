@@ -25,15 +25,36 @@ const permissionSelect = {
 export class PermissionsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  create(createPermissionDto: CreatePermissionDto) {
-    // id 为雪花 BigInt，schema 未设默认值，需在代码层生成（见 schema.prisma 注释）
-    return this.prisma.permission.create({
-      data: {
-        id: BigInt(generateSnowflakeId()),
-        ...createPermissionDto,
-      },
-      select: permissionSelect,
-    });
+  async create(createPermissionDto: CreatePermissionDto) {
+    try {
+      // id 为雪花 BigInt，schema 未设默认值，需在代码层生成（见 schema.prisma 注释）
+      return await this.prisma.permission.create({
+        data: {
+          id: BigInt(generateSnowflakeId()),
+          ...createPermissionDto,
+        },
+        select: permissionSelect,
+      });
+    } catch (e) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        // 唯一索引冲突：精确区分 name / code（schema 中两者均为 @unique）
+        const target = (e.meta?.target as unknown[]) ?? [];
+        if (target.includes('name')) {
+          throw new ErrorException(
+            ErrorExceptionCode.PERMISSION_NAME_ALREADY_EXISTS,
+          );
+        }
+        if (target.includes('code')) {
+          throw new ErrorException(
+            ErrorExceptionCode.PERMISSION_CODE_ALREADY_EXISTS,
+          );
+        }
+      }
+      throw e;
+    }
   }
 
   findByCodes(codes: PermissionCodeType[]) {
