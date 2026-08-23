@@ -8,7 +8,7 @@ import { PrismaService } from '@/shared/database/prisma/prisma.service';
 import { generateSnowflakeId } from '@/shared/utils/snowflake';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma } from '@prisma/client';
+import { Permission, Prisma } from '@prisma/client';
 import { hash, verify } from 'argon2';
 import { PermissionsService } from '../permissions/permissions.service';
 import { RolesService } from '../roles/roles.service';
@@ -194,11 +194,11 @@ export class UsersService {
   }
 
   async getProfile(): Promise<UserWithFlatRoles> {
-    // useRequestUser() 返回 Prisma.User，其 id 是 BigInt。
-    const userId = useRequestUser().id as bigint;
+
+    const id = useRequestUser().id;
 
     const user = await this.prisma.user.findFirst({
-      where: { id: userId, deletedAt: null },
+      where: { id, deletedAt: null },
       select: userWithRolesSelect,
     });
 
@@ -209,18 +209,21 @@ export class UsersService {
     return flattenUserRoles(user);
   }
 
-  async getPermissions(userId?: string) {
-    const id = userId ?? (useRequestUser().id as bigint).toString();
+  async getPermissions(): Promise<Permission[]> {
+    const id = useRequestUser().id;
 
-    const roles = await this.rolesService.findByUser(id);
-
-    // 使用 Prisma 原生多对多过滤（走 rolePermissions 中间表），
-    // 替代旧 TypeORM 版 `where: { roles: { id: In(...) } }` 的嵌套风格。
+    // 单次嵌套 filter：Permission → rolePermissions → role → users 反向过滤到当前用户，
+    // 替代旧 TypeORM 版 `where: { roles: { id: In(...) } }` 与本服务旧版「先查 roles 再查 permissions」两段式，
+    // 消除一次 DB 往返与 roleIds 中间数组物化。
+    // role.deletedAt: null 对齐 rolesService.findByUser 的软删过滤语义。
     return this.permissionsService.findMany({
       where: {
         rolePermissions: {
           some: {
-            roleId: { in: roles.map((role) => role.id) },
+            role: {
+              users: { some: { userId: id } },
+              deletedAt: null,
+            },
           },
         },
       },
