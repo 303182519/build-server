@@ -31,7 +31,14 @@ export class ResponseInterceptor<T> implements NestInterceptor {
     return next.handle().pipe(
       map((data) => {
         // 已是标准格式则透传，避免重复包装
-        if (data && typeof data === 'object' && 'code' in data) {
+        // 注意：必须同时校验 code 为 number、message 为 string，
+        // 否则像 Permission 这种实体（自带 string 类型的 code 字段）会被误判
+        if (
+          data &&
+          typeof data === 'object' &&
+          typeof (data as any).code === 'number' &&
+          typeof (data as any).message === 'string'
+        ) {
           return data;
         }
         return createResponse(data, response.statusCode);
