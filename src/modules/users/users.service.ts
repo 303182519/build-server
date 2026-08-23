@@ -238,8 +238,7 @@ export class UsersService {
     page: number;
     pageSize: number;
   }> {
-    // 强制分页：避免全表返回造成内存与响应膨胀，pageSize 由 DTO 限制最大 100。
-    // 注意：Prisma schema 无 displayName 字段，这里只按 username / email 模糊搜索。
+
     const where: Prisma.UserWhereInput = {
       deletedAt: null,
     };
