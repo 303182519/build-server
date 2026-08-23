@@ -20,22 +20,24 @@ const DUMMY_HASH =
   '$argon2id$v=19$m=65536,t=5,p=4$c29tZXNhbHR0aGF0aXMxNmJ5dGVz$' +
   'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
-// 登录查询时连带拉取的角色 + 权限载荷类型，与下方 findUnique 的 include 对齐。
-// 单独抽出便于 toUserResponse / authResponse 共用，避免重复内联一长串 include 类型。
+// 登录 / 注册查询时连带拉取的角色 + 权限载荷，与下方 findUnique 的 include 对齐。
+// 单独抽出 include + 类型，便于 login / register / toUserResponse 共用，避免重复内联。
+const userWithRolesInclude = {
+  roles: {
+    include: {
+      role: {
+        include: {
+          rolePermissions: {
+            include: { permission: true },
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.UserInclude;
+
 type UserWithRoles = Prisma.UserGetPayload<{
-  include: {
-    roles: {
-      include: {
-        role: {
-          include: {
-            rolePermissions: {
-              include: { permission: true };
-            };
-          };
-        };
-      };
-    };
-  };
+  include: typeof userWithRolesInclude;
 }>;
 
 @Injectable()
@@ -50,7 +52,16 @@ export class AuthService {
   ) {}
 
   async register(registerDto: RegisterDto) {
-    return await this.usersService.create(registerDto);
+    const created = await this.usersService.create(registerDto);
+    // 注册即登录：重新拉取带角色 + 权限的完整载荷后签发 token，与 login 出口形状一致，
+    // 让前端注册完直接进入已登录态，省一次显式登录往返。
+    // findUniqueOrThrow：刚创建的用户必存在，无需 null 兜底；若极端并发下被删则抛 P2025。
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: created.id },
+      include: userWithRolesInclude,
+    });
+    const tokens = await this.refreshTokenService.issue(user);
+    return this.authResponse(user, tokens);
   }
 
   async login(dto: LoginDto) {
@@ -64,19 +75,7 @@ export class AuthService {
 
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
-      include: {
-        roles: {
-          include: {
-            role: {
-              include: {
-                rolePermissions: {
-                  include: { permission: true },
-                },
-              },
-            },
-          },
-        },
-      },
+      include: userWithRolesInclude,
     });
     // 用户不存在也比对一次（用废弃哈希），保持常量时间；任何失败都回同一个错误。
     // 注意：argon2.verify 在 hash 格式非法时会 throw（不是返回 false），

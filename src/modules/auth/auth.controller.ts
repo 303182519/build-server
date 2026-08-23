@@ -55,7 +55,7 @@ export class AuthController {
     return {
       accessToken: tokens.accessToken,
       expiresAt: tokens.accessExpiresAt,
-      // user: tokens.user,
+      user: tokens.user,
     };
   }
 
