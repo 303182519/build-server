@@ -529,40 +529,47 @@ export class UsersService {
   }
 
   async updatePasswordByAdmin(
-    id: string,
+    id: bigint,
     { newPassword }: UpdatePasswordByAdminDto,
   ) {
-    const prismaId = toBigIntId(id);
+    // 哈希在事务外：argon2 是 CPU 密集（timeCost=5 约 50-100ms），
+    // 放进 $transaction 会拉长 DB 连接占用，与 remove 的事务粒度惯例不一致。
+    const hashedPassword = await hash(newPassword, { timeCost: 5 });
 
-    const user = await this.prisma.user.findFirst({
-      where: { id: prismaId, deletedAt: null },
-      select: { id: true },
-    });
-    if (!user) {
-      throw new ErrorException(ErrorExceptionCode.USER_NOT_FOUND);
-    }
-
-    const hashedPassword = await hash(newPassword, {
-      timeCost: 5,
-    });
-
-    try {
-      await this.prisma.user.update({
-        where: { id: prismaId },
+    // 包事务：保证「密码重置 + 审计日志」原子性，与 remove 的 $transaction 惯例一致。
+    // 设计取舍：用 updateMany + count===0 单次原子查询替代旧版 findFirst + update 两段式——
+    //   - 消除 TOCTOU 窗口（旧版 findFirst 与 update 之间的并发软删/物理删无保护）
+    //   - where 同时带 id 和 deletedAt: null，软删用户 count===0 被正确拦截
+    //     （旧版 update 的 where 仅带 id，软删用户仍会被命中——存在安全隐患）
+    //   - updateMany 对 0 行也成功，无需 try/catch P2025
+    //     （与同文件 refreshToken.updateMany 的 0 行处理惯例一致）
+    //   - 不区分「id 不存在」与「已被软删」——两者对调用方等价，避免信息泄露。
+    return this.prisma.$transaction(async (tx) => {
+      const result = await tx.user.updateMany({
+        where: { id, deletedAt: null },
         data: { password: hashedPassword },
-        select: { id: true },
       });
-    } catch (e) {
-      if (
-        e instanceof Prisma.PrismaClientKnownRequestError &&
-        e.code === 'P2025'
-      ) {
+
+      if (result.count === 0) {
         throw new ErrorException(ErrorExceptionCode.USER_NOT_FOUND);
       }
-      throw e;
-    }
 
-    return { message: 'Password updated successfully' };
+      // 操作人审计：项目无 AuditLog 服务，用 Logger 记录最小轨迹。
+      // useRequestUser() 仅在请求生命周期内可用；非请求上下文（如定时任务）
+      // 降级仍记目标信息，保证至少有「发生了密码重置」的可追溯线索。
+      // 写法与 remove 对齐，便于跨模块统一检索。
+      // 不记 newPassword / hashedPassword——敏感数据不进日志，符合 OWASP 日志纪律。
+      try {
+        const operator = useRequestUser();
+        this.logger.log(
+          `User password reset by admin: targetId=${id}, operator=${operator.id}`,
+        );
+      } catch {
+        this.logger.log(`User password reset by admin: targetId=${id}`);
+      }
+
+      return { message: 'Password updated successfully' };
+    });
   }
 
   async remove(id: bigint): Promise<{ success: true }> {
