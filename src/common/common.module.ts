@@ -4,7 +4,7 @@ import {
   Module,
   NestModule,
   RequestMethod,
-	ClassSerializerInterceptor,
+  ClassSerializerInterceptor,
 } from '@nestjs/common';
 import { globalPipes } from './pipes/index';
 import { APP_FILTER, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
@@ -18,8 +18,6 @@ import cookieParser from 'cookie-parser';
 import { RequestIdMiddleware } from './middleware/request-id.middleware';
 import { HttpLoggerMiddleware } from './middleware/http-logger.middleware';
 
-
-
 // 横切关注点的集中注册点
 // 用 @Global() 是因为下面的 APP_* provider 要在整个应用生效；
 // 业务 service 仍应通过普通 imports/exports 显式声明依赖。
@@ -29,17 +27,17 @@ import { HttpLoggerMiddleware } from './middleware/http-logger.middleware';
     // 注册顺序就是执行顺序：Timing 在最外层，能测到全链路耗时
     // 写反（Timing 在内层）会让统计值偏小
     { provide: APP_INTERCEPTOR, useClass: TimingInterceptor },
-		{ provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },
-		{ provide: APP_INTERCEPTOR, useClass: PostResponseInterceptor },
-		{ provide: APP_INTERCEPTOR, useClass: UserContextInterceptor },
-		// https://docs.nestjs.cn/techniques/serialization
-		{ provide: APP_INTERCEPTOR, useClass: ClassSerializerInterceptor },
-		{ provide: APP_INTERCEPTOR, useClass: TimeoutInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: PostResponseInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: UserContextInterceptor },
+    // https://docs.nestjs.cn/techniques/serialization
+    { provide: APP_INTERCEPTOR, useClass: ClassSerializerInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: TimeoutInterceptor },
     // 全局 ValidationPipe：注意 main.ts 不要再 useGlobalPipes，否则会跑两遍
     {
       provide: APP_PIPE,
       useFactory: globalPipes,
-		},
+    },
     { provide: APP_FILTER, useClass: GlobalExceptionsFilter },
   ],
 })

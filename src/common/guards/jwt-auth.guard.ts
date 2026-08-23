@@ -42,13 +42,12 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     // context: ExecutionContext,
     // status?: any,
   ): TUser {
-
     console.log('-------------JwtAuthGuard-------------');
     console.log('err:', err);
     console.log('user:', user?.username);
     console.log('info:', info);
     console.log('--------------------------------------');
-    
+
     if (err) {
       throw err;
     }

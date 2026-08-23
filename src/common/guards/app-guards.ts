@@ -8,10 +8,10 @@ export const appGuards = [
     provide: APP_GUARD,
     useClass: JwtAuthGuard,
   },
-    {
-      provide: APP_GUARD,
-      useClass: PermissionGuard,
-    },
+  {
+    provide: APP_GUARD,
+    useClass: PermissionGuard,
+  },
   {
     provide: APP_GUARD,
     useClass: AppThrottlerGuard,

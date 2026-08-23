@@ -1,5 +1,3 @@
-
-
 export const UsersPermissionCode = {
   USER_CREATE: 'user:create',
   USER_READ: 'user:read',

@@ -24,10 +24,7 @@ export class RefreshTokenService {
   ) {}
 
   // client 可传入事务句柄 tx：rotate 把"作废旧的 + 写新的"放进同一事务时需要
-  async issue(
-    user: User,
-    client: Prisma.TransactionClient = this.prisma,
-  ) {
+  async issue(user: User, client: Prisma.TransactionClient = this.prisma) {
     const payload: JwtPayload = {
       sub: user.id.toString(),
     };
@@ -48,12 +45,11 @@ export class RefreshTokenService {
         userId: user.id,
       },
     });
-    
 
     return {
       accessToken,
       refreshToken,
-      accessExpiresAt, 
+      accessExpiresAt,
       refreshExpiresAt,
     };
   }
@@ -82,7 +78,8 @@ export class RefreshTokenService {
         where: { id: record.id, revokedAt: null },
         data: { revokedAt: new Date() },
       });
-      if (revoked.count === 0) throw new ErrorException(ErrorExceptionCode.INVALID_REFRESH_TOKEN);
+      if (revoked.count === 0)
+        throw new ErrorException(ErrorExceptionCode.INVALID_REFRESH_TOKEN);
       return { tokens: await this.issue(record.user, tx) };
     });
   }

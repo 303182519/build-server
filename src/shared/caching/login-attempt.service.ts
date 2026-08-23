@@ -4,7 +4,6 @@ import { REDIS_CLIENT } from './cache.tokens';
 import { CacheKeys } from './cache.constants';
 import { AUTH_LOCKOUT } from '@/common/constants/auth';
 
-
 // Day 40：账号级登录锁定。和 Day 35 的限流（@Throttler，**按 IP**）正交——
 //   限流挡「同一来源 IP 的洪泛」，锁定挡「针对同一账号的密码爆破」。
 //   攻击者用一堆 IP（代理池）撞一个账号时，IP 限流逐个 IP 都没超阈值，

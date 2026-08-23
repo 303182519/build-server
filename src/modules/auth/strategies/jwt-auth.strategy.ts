@@ -33,7 +33,6 @@ export class JwtAuthStrategy extends PassportStrategy(Strategy, 'jwt') {
    * return 的对象 会挂载到 req.user
    */
   async validate(payload: JwtPayload) {
-
     // payload 就是登录签发token时传入的数据，例如 { sub: userId, username:xxx }
     // 这里你可以查询数据库，验证用户是否存在、是否被禁用。
     // findOneOrThrow 在用户不存在/已软删时已抛 USER_NOT_FOUND，无需再判空。

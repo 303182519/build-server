@@ -10,31 +10,36 @@ export const hashCacheToken = (token: string): string => {
 
 /**
  * 改造后 - 更规范的企业级命名
- * 
+ *
  */
 export const CacheKeys = {
   // 单值ID场景，短形式可接受，但建议统一
   USER_BY_ID: (id: string | number) => `user:profile:id=${id}`,
-  BENCHMARK_USER_BY_ID: (id: string | number) => `benchmark:user:profile:id=${id}`,
-  
+  BENCHMARK_USER_BY_ID: (id: string | number) =>
+    `benchmark:user:profile:id=${id}`,
+
   // 多维度查询，必须显式参数名
   USER_BY_USERNAME: (username: string) => `user:profile:username=${username}`,
   ROLE_TREE: (roleId: string | number) => `rbac:roleTree:roleId=${roleId}`,
-  PERMISSION_BY_USER: (userId: string | number) => `auth:permission:userId=${userId}`,
-  
+  PERMISSION_BY_USER: (userId: string | number) =>
+    `auth:permission:userId=${userId}`,
+
   // token本身是敏感值，hash后当key是对的，但命名可以更清晰
-  AUTH_REFRESH_TOKEN: (token: string) => `auth:refreshToken:hash=${hashCacheToken(token)}`,
+  AUTH_REFRESH_TOKEN: (token: string) =>
+    `auth:refreshToken:hash=${hashCacheToken(token)}`,
 
   // 登录失败计数器：邮箱归一化（trim + 小写），避免大小写差异算成两个账号
   AUTH_LOGIN_FAIL: (email: string) =>
     `auth:loginFail:email=${email.trim().toLowerCase()}`,
 
   // ===== 列表类场景（多参数） =====
-  ORDER_LIST: (params: { supplierId: string; page: number; status?: string }) => 
+  ORDER_LIST: (params: { supplierId: string; page: number; status?: string }) =>
     [
       'order:list',
       `supplierId=${params.supplierId}`,
       `page=${params.page}`,
       params.status !== undefined ? `status=${params.status}` : '',
-    ].filter(Boolean).join(':'),
+    ]
+      .filter(Boolean)
+      .join(':'),
 } as const;

@@ -6,7 +6,6 @@ import { useSwagger } from './shared/utils/swagger';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { initSnowflake } from './shared/utils/snowflake';
 
-
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     cors: true,

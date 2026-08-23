@@ -26,7 +26,7 @@ import { join } from 'path';
           if (path.endsWith('.html')) {
             res.setHeader('Cache-Control', 'no-cache');
           }
-        }
+        },
       },
     }),
   ],

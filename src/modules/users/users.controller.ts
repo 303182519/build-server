@@ -54,7 +54,7 @@ export class UsersController {
   })
   @Permission(PermissionCode.USER_READ)
   @Get(':id')
-  findOne(@Param('id', ParseSnowflakePipe) id: bigint,) {
+  findOne(@Param('id', ParseSnowflakePipe) id: bigint) {
     return this.usersService.findOneOrThrow(
       { id },
       {
@@ -69,8 +69,8 @@ export class UsersController {
   @Permission(PermissionCode.USER_UPDATE)
   @Patch(':id')
   update(
-    @Param('id', ParseSnowflakePipe) id: bigint, 
-    @Body() updateUserDto: UpdateUserDto
+    @Param('id', ParseSnowflakePipe) id: bigint,
+    @Body() updateUserDto: UpdateUserDto,
   ) {
     return this.usersService.update(id, updateUserDto);
   }

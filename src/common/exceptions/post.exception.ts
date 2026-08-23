@@ -15,7 +15,7 @@ export const PostExceptionMap: Record<PostExceptionCode, ExceptionInfo> = {
     message: 'Post not found',
     status: HttpStatus.NOT_FOUND,
     code: PostExceptionCode.POST_NOT_FOUND,
-  },  
+  },
   [PostExceptionCode.SLUG_TAKEN]: {
     message: 'slug 已被占用',
     status: HttpStatus.CONFLICT,

@@ -11,7 +11,9 @@ const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 @ValidatorConstraint({ name: 'IsSlug', async: false })
 class IsSlugConstraint implements ValidatorConstraintInterface {
   validate(value: unknown): boolean {
-    return typeof value === 'string' && value.length <= 80 && SLUG_RE.test(value);
+    return (
+      typeof value === 'string' && value.length <= 80 && SLUG_RE.test(value)
+    );
   }
   defaultMessage(args: ValidationArguments): string {
     return `${args.property} 必须是小写字母、数字和连字符组成的 slug（不能以 - 开头/结尾，最长 80）`;

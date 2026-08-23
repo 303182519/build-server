@@ -87,14 +87,11 @@ const buildRedisUrl = (redis: {
     CacheHealthIndicator,
     LoginAttemptService,
   ],
-  exports: [
-    CacheService, 
-    HashCacheService, 
-    LoginAttemptService, 
-    REDIS_CLIENT,
-  ],
+  exports: [CacheService, HashCacheService, LoginAttemptService, REDIS_CLIENT],
 })
-export class RedisCacheModule implements OnApplicationBootstrap, OnModuleDestroy {
+export class RedisCacheModule
+  implements OnApplicationBootstrap, OnModuleDestroy
+{
   private readonly logger = new Logger(RedisCacheModule.name);
 
   constructor(

@@ -44,10 +44,7 @@ export class AuthController {
   })
   @ApiEnvelope(AuthResponseDto)
   @ApiErrorEnvelope(400, '参数校验失败', 'VALIDATION_ERROR')
-  @ApiExceptionEnvelope(
-    UserExceptionMap,
-    UserExceptionCode.USER_ALREADY_EXISTS,
-  )
+  @ApiExceptionEnvelope(UserExceptionMap, UserExceptionCode.USER_ALREADY_EXISTS)
   @Throttle({ default: AUTH_THROTTLE.signup })
   @Public()
   @Post('register')

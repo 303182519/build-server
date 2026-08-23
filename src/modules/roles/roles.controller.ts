@@ -39,11 +39,8 @@ const idParam = ApiParam({
   description: '角色雪花 ID',
 });
 
-
-
 @ApiBearerAuth()
 @Controller('roles')
-
 export class RolesController {
   constructor(private readonly rolesService: RolesService) {}
 

@@ -11,7 +11,9 @@ export class CreatePermissionDto {
   @IsString({ message: 'name 必须是字符串' })
   name!: string;
 
-  @Matches(/^[a-z]+:[a-z]+$/, { message: 'code 格式必须为 xxx:xxx（如 permission:create）' })
+  @Matches(/^[a-z]+:[a-z]+$/, {
+    message: 'code 格式必须为 xxx:xxx（如 permission:create）',
+  })
   code!: PermissionCodeType;
 
   @IsOptional()
