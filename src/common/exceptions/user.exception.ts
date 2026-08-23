@@ -7,6 +7,9 @@ export const UserExceptionCode = {
   NEW_PASSWORD_SAME_AS_OLD: '11403',
   SUPER_ADMIN_IS_SPECIAL: '11404',
   CANNOT_DELETE_SELF: '11405',
+  USERNAME_ALREADY_EXISTS: '11406',
+  EMAIL_ALREADY_EXISTS: '11407',
+  UPDATE_PERMISSION_DENIED: '11408',
 } as const;
 
 export type UserExceptionCode =
@@ -37,5 +40,20 @@ export const UserExceptionMap: Record<UserExceptionCode, ExceptionInfo> = {
     message: '不能删除当前登录用户',
     status: HttpStatus.BAD_REQUEST,
     code: UserExceptionCode.CANNOT_DELETE_SELF,
+  },
+  [UserExceptionCode.USERNAME_ALREADY_EXISTS]: {
+    message: '用户名已存在',
+    status: HttpStatus.CONFLICT,
+    code: UserExceptionCode.USERNAME_ALREADY_EXISTS,
+  },
+  [UserExceptionCode.EMAIL_ALREADY_EXISTS]: {
+    message: '邮箱已存在',
+    status: HttpStatus.CONFLICT,
+    code: UserExceptionCode.EMAIL_ALREADY_EXISTS,
+  },
+  [UserExceptionCode.UPDATE_PERMISSION_DENIED]: {
+    message: '无权限修改该用户信息',
+    status: HttpStatus.FORBIDDEN,
+    code: UserExceptionCode.UPDATE_PERMISSION_DENIED,
   },
 };
