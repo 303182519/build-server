@@ -18,9 +18,9 @@ async function bootstrap() {
   initSnowflake(BigInt(snowflake.workerId), BigInt(snowflake.datacenterId));
 
   // 全局：BigInt 输出JSON自动转字符串
-  // (BigInt.prototype as any).toJSON = function () {
-  //   return this.toString();
-  // };
+  (BigInt.prototype as any).toJSON = function () {
+    return this.toString();
+  };
 
   // 设置api前缀
   app.setGlobalPrefix(server.apiPrefix);
