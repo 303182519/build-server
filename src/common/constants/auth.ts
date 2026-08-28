@@ -7,10 +7,6 @@ export const AUTH_THROTTLE = {
   logout: { ttl: 60_000, limit: 10 },
 } as const;
 
-export enum TokenType {
-  ACCESS = 'access',
-  REFRESH = 'refresh',
-}
 
 export const AUTH_LOCKOUT = {
   maxAttempts: 5, // 同一账号连续登录失败几次后锁定（默认 5）

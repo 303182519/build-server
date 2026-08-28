@@ -1,4 +1,3 @@
-import { TokenType } from '@/common/constants/auth';
 import {
   ErrorException,
   ErrorExceptionCode,
@@ -13,7 +12,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { JwtPayload } from './strategies/jwt-auth.strategy';
 import { randomBytes } from 'crypto';
-import { Console } from 'console';
+
 
 @Injectable()
 export class RefreshTokenService {
@@ -87,11 +86,10 @@ export class RefreshTokenService {
    * 撤销 refresh token（登出 / 主动作废）。
    * 不物理删除：置 revokedAt 即时失效，保留审计轨迹。Redis 命中时同步清除。
    */
-  async revoke(refreshToken: string) {
+  async revoke(refreshToken: string | undefined) {
     if (!refreshToken) {
       return;
     }
-
     await this.prisma.refreshToken.updateMany({
       where: {
         tokenHash: hashCacheToken(refreshToken),

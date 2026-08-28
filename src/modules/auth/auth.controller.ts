@@ -117,7 +117,7 @@ export class AuthController {
   @Throttle({ default: AUTH_THROTTLE.logout })
   @Post('logout')
   logout(
-    @Cookies(REFRESH_TOKEN_KEY) refreshToken: string,
+    @Cookies(REFRESH_TOKEN_KEY) refreshToken: string | undefined,
     @Res({ passthrough: true }) res: Response,
   ) {
     res.clearCookie(REFRESH_TOKEN_KEY);

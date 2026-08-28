@@ -101,7 +101,7 @@ export class AuthService {
     return this.authResponse(user, tokens);
   }
 
-  async logout(refreshToken: string) {
+  async logout(refreshToken: string | undefined) {
     await this.refreshTokenService.revoke(refreshToken);
 
     return { success: true };
