@@ -44,6 +44,15 @@ export interface ThrottlerConfig {
   limit: number;
 }
 
+export interface GithubConfig {
+  /** GitHub OAuth App Client ID，为空则禁用 GitHub 登录 */
+  clientId?: string;
+  /** GitHub OAuth App Client Secret */
+  clientSecret?: string;
+  /** 授权回调地址 */
+  callbackUrl?: string;
+}
+
 export interface AppConfig {
   server?: ServerConfig;
   swagger?: SwaggerConfig;
@@ -52,6 +61,7 @@ export interface AppConfig {
   snowflake?: SnowflakeConfig;
   redis?: RedisConfig;
   throttler?: ThrottlerConfig;
+  github?: GithubConfig;
 }
 
 export type AppConfigForced = {

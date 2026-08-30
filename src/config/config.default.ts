@@ -53,4 +53,12 @@ export const defaultConfig = registerAs('default', (): AppConfig => ({
     // 窗口内最大请求数
     limit: Number(process.env.THROTTLER_LIMIT) || 60,
   },
+  github: {
+    // 为空则禁用 GitHub 登录，不影响启动
+    clientId: process.env.GITHUB_CLIENT_ID,
+    clientSecret: process.env.GITHUB_CLIENT_SECRET,
+    callbackUrl:
+      process.env.GITHUB_CALLBACK_URL ||
+      'http://localhost:3000/auth/github/callback',
+  },
 }));
