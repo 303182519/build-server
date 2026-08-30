@@ -28,14 +28,14 @@ export function ApiEnvelope<TModel extends Type<unknown>>(
           data: options.isArray
             ? { type: 'array', items: { $ref: getSchemaPath(model) } }
             : { $ref: getSchemaPath(model) },
-          message: { type: 'string', example: 'ok' },
+          message: { type: 'string', example: 'success' },
         },
       },
     }),
   );
 }
 
-// 失败响应：data 恒为 null
+// 失败响应：与 GlobalExceptionsFilter 的实际输出结构一致 { statusCode, code, message }
 export function ApiErrorEnvelope(
   status: number,
   description: string,
@@ -46,9 +46,9 @@ export function ApiErrorEnvelope(
     description,
     schema: {
       properties: {
+        statusCode: { type: 'number', example: status },
         code: { type: 'string', example: codeExample },
-        data: { type: 'object', nullable: true, example: null },
-        message: { type: 'string' },
+        message: { type: 'string', example: description },
       },
     },
   });

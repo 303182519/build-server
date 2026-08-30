@@ -90,21 +90,6 @@ function flattenUserRoles(user: UserWithRolesPayload): UserWithFlatRoles {
 }
 
 /**
- * 将字符串 ID（来自路由参数 / DTO / JWT sub）转换为 Prisma 需要的 BigInt。
- * 非法字符串（空 / NaN）直接抛 USER_NOT_FOUND，与"查不到"等价——省一次数据库往返。
- */
-function toBigIntId(id: string): bigint {
-  if (!id) {
-    throw new ErrorException(ErrorExceptionCode.USER_NOT_FOUND);
-  }
-  try {
-    return BigInt(id);
-  } catch {
-    throw new ErrorException(ErrorExceptionCode.USER_NOT_FOUND);
-  }
-}
-
-/**
  * DTO specialRoles 是枚举数组（为未来多值扩展预留），
  * 但当前 Prisma schema 中 specialRoles 是 VARCHAR(255) 单值，
  * 且 guard / remove 逻辑都按单值判断（=== 比较、matchRoles 包 [v] 单元素数组）。

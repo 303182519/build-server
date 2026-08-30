@@ -9,6 +9,7 @@ import {
 import { Request, Response } from 'express';
 import { IsProduction } from '../constants/environment';
 import { BaseException } from '../exceptions/base.exception';
+import { BizCode, StandardResponse } from '../response/base.response';
 
 /**
  * TODO: 日志系统代办
@@ -70,6 +71,25 @@ function isJsonParseError(exception: unknown): boolean {
 }
 
 /**
+ * 无业务错误码可提供时，按 HTTP 状态归类兜底 bizCode
+ * 避免将 exception.name（如 TypeError）等实现细节透出给客户端
+ */
+function fallbackBizCode(status: HttpStatus): string {
+  return status >= HttpStatus.INTERNAL_SERVER_ERROR
+    ? BizCode.INTERNAL_ERROR
+    : BizCode.CLIENT_ERROR;
+}
+
+/**
+ * 从 X-Request-Id 请求头中提取链路 ID
+ * RequestIdMiddleware 保证每个请求都会携带该头（上游未带时自动生成）
+ */
+function resolveRequestId(headers: Request['headers']): string | undefined {
+  const value = headers['x-request-id'];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+/**
  * 全局异常过滤器
  * 处理所有未捕获的异常，并将其转换为统一的响应格式
  */
@@ -82,65 +102,70 @@ export class GlobalExceptionsFilter implements ExceptionFilter {
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
-    const responseBody: {
-      statusCode: number; // http状态码
-      code: string; // 自定义错误码
-      message: string;
-      errors?: unknown;
-    } = {
-      statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
-      code: 'INTERNAL_SERVER_ERROR',
+    const responseBody: StandardResponse<null> = {
+      code: HttpStatus.INTERNAL_SERVER_ERROR,
       message: '服务器繁忙，请稍后重试',
+      data: null,
+      bizCode: BizCode.INTERNAL_ERROR,
+      path: request.url,
+      requestId: resolveRequestId(request.headers),
     };
 
     // 请求体 JSON 语法错误：返回友好提示，避免把 V8 解析细节（如 "Expected ... in JSON at position N"）直接暴露给客户端
     if (isJsonParseError(exception)) {
-      responseBody.statusCode = HttpStatus.BAD_REQUEST;
+      responseBody.code = HttpStatus.BAD_REQUEST;
       responseBody.message = '请求JSON格式错误，请检查请求体语法';
+      responseBody.bizCode = BizCode.BAD_REQUEST;
     } else if (exception instanceof BaseException) {
       const exceptionResponse = exception.getResponse() as {
         message: string | string[];
-        code: string;
+        code?: string;
       };
 
-      responseBody.statusCode = exception.getStatus();
+      responseBody.code = exception.getStatus();
       responseBody.message = Array.isArray(exceptionResponse.message)
         ? exceptionResponse.message.join(', ')
         : exceptionResponse.message;
-      responseBody.code = exceptionResponse.code || exception.name;
+      // 业务异常应携带业务错误码（MMSNN 规范），未携带时按 HTTP 状态归类兜底
+      responseBody.bizCode =
+        exceptionResponse.code || fallbackBizCode(responseBody.code);
     } else if (exception instanceof HttpException) {
       const exceptionResponse = exception.getResponse();
-      responseBody.statusCode = exception.getStatus();
-      if (typeof exceptionResponse === 'object') {
+      responseBody.code = exception.getStatus();
+
+      if (typeof exceptionResponse === 'object' && exceptionResponse !== null) {
         const exceptionObj = exceptionResponse as {
-          message: string;
-          code: string;
+          message?: string | string[];
+          code?: string;
           errors?: unknown;
         };
         // 优先使用自定义异常中传入的 data（如校验错误的 field+message 数组）
         if (exceptionObj.errors !== undefined) {
           responseBody.errors = exceptionObj.errors;
         }
-
-        responseBody.message = exceptionObj.message;
-        responseBody.code = exceptionObj.code;
+        if (exceptionObj.message !== undefined) {
+          responseBody.message = Array.isArray(exceptionObj.message)
+            ? exceptionObj.message.join(', ')
+            : exceptionObj.message;
+        }
+        responseBody.bizCode =
+          exceptionObj.code || fallbackBizCode(responseBody.code);
       } else {
-        responseBody.message = exceptionResponse;
-        responseBody.code = exception.name;
+        responseBody.bizCode = fallbackBizCode(responseBody.code);
       }
     } else if (exception instanceof Error) {
       if (!IsProduction) {
         responseBody.message = exception.message;
       }
-      responseBody.code = exception.name;
+      responseBody.bizCode = BizCode.INTERNAL_ERROR;
     }
 
     // 记录错误日志
     this.logger.error(
-      `[${request.method}] ${request.url} ${responseBody.code} Message: ${responseBody.message}`,
+      `[${request.method}] ${request.url} ${responseBody.code} bizCode=${responseBody.bizCode} reqId=${responseBody.requestId} Message: ${responseBody.message}`,
       exception instanceof Error ? exception.stack : undefined,
     );
 
-    response.status(responseBody.statusCode).json(responseBody);
+    response.status(responseBody.code).json(responseBody);
   }
 }
