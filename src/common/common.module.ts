@@ -15,6 +15,8 @@ import { UserContextInterceptor } from './interceptors/user-context.interceptor'
 import { TimeoutInterceptor } from './interceptors/timeout.interceptor';
 import { GlobalExceptionsFilter } from './filters/global-exception.filter';
 import cookieParser from 'cookie-parser';
+import { RequestContextMiddleware } from './middleware/request-context.middleware';
+import { CacheHeaderInterceptor } from './interceptors/cache-header.interceptor';
 import { RequestIdMiddleware } from './middleware/request-id.middleware';
 import { HttpLoggerMiddleware } from './middleware/http-logger.middleware';
 
@@ -27,6 +29,9 @@ import { HttpLoggerMiddleware } from './middleware/http-logger.middleware';
     // 注册顺序就是执行顺序：Timing 在最外层，能测到全链路耗时
     // 写反（Timing 在内层）会让统计值偏小
     { provide: APP_INTERCEPTOR, useClass: TimingInterceptor },
+    // 把 service 写进请求上下文的缓存命中状态，写成 X-Cache 响应头（纯可观测）。
+    // 排在 Transform 前/后都行——它只在 tap 里设 header，不改响应体。
+    { provide: APP_INTERCEPTOR, useClass: CacheHeaderInterceptor },
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },
     { provide: APP_INTERCEPTOR, useClass: PostResponseInterceptor },
     { provide: APP_INTERCEPTOR, useClass: UserContextInterceptor },
@@ -43,6 +48,11 @@ import { HttpLoggerMiddleware } from './middleware/http-logger.middleware';
 })
 export class CommonModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
+
+    // 请求上下文（CLS）必须【最先】挂——它在最外层 .run(store, next) 开上下文，
+    // 后续所有中间件 / controller / service / 拦截器都在这个 store 里，X-Cache 状态才传得出去。
+    consumer.apply(RequestContextMiddleware).forRoutes('*');
+
     consumer
       .apply(cookieParser(), RequestIdMiddleware, HttpLoggerMiddleware)
       // /health 不进访问日志：会被探针高频调用，日志量没价值
