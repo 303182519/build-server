@@ -28,6 +28,8 @@ model User {
   username  String    @unique @db.VarChar(100)
   password  String    @db.VarChar(255)
   specialRoles  String?   @db.VarChar(255)
+  // GitHub 用户数字 id（存成字符串）。绑定后用它定位用户；唯一。
+  githubId String? @unique @map("github_id") @db.VarChar(32)
 
   @@index([deletedAt]) // 软删除查询索引
 
