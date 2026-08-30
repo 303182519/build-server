@@ -129,6 +129,7 @@ export class AuthController {
     res.cookie(REFRESH_TOKEN_KEY, refreshToken, {
       httpOnly: true,
       secure: IsProduction,
+      sameSite: IsProduction ? 'lax' : 'none', // 开发环境跨域调试用 none，none必须搭配 secure:true
       maxAge: getConfig(this.configService).jwt.refreshExpiresIn * 1000,
     });
   }
