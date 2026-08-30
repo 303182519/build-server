@@ -130,6 +130,8 @@ export class AuthController {
       httpOnly: true,
       secure: IsProduction,
       sameSite: IsProduction ? 'lax' : 'none', // 开发环境跨域调试用 none，none必须搭配 secure:true
+      domain: IsProduction ? 'baidu.com' : undefined,
+      path: '/', // /api/auth/refresh
       maxAge: getConfig(this.configService).jwt.refreshExpiresIn * 1000,
     });
   }
