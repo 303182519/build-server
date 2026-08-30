@@ -315,16 +315,19 @@ export class UsersService {
     updateUserDto: UpdateUserDto,
   ): Promise<UserBasePayload> {
     // ------------------------------------------------------------------
-    // 1) 输入规范化：空字符串 '' → undefined，避免：
-    //    - class-validator 的 @ValidateIf 虽然在校验层放行了 ''，
-    //      但 service 层若直接以 '' 走 (sanitized.username || ...) 分支，
-    //      会错误跳过唯一性检查并落脏数据。
-    //    - Prisma 若 email='' 入库，下一次 INSERT/UPDATE 会在空值上撞唯一。
+    // 1) 输入规范化：'' / null → undefined（DTO 层已对 '' fail-fast，此处为纵深防御）：
+    //    - '' 是真实值，入库后两个 '' 会在唯一索引上互相冲突（P2002）；
+    //    - null 若透传，Prisma 会把库里的 email 静默清成 NULL（等于解绑登录凭证）。
+    //    二者统一视为「未提交该字段」，跳过更新。
     // ------------------------------------------------------------------
     const normalizedEmail =
-      updateUserDto.email === '' ? undefined : updateUserDto.email;
+      updateUserDto.email === '' || updateUserDto.email == null
+        ? undefined
+        : updateUserDto.email;
     const normalizedUsername =
-      updateUserDto.username === '' ? undefined : updateUserDto.username;
+      updateUserDto.username === '' || updateUserDto.username == null
+        ? undefined
+        : updateUserDto.username;
 
     // 若 DTO 两个字段都被规范化为"实际无变更"，则直接走 1 次存在性查询后原封返回。
     // 否则进入下方的 2-in-1 合并查询。
@@ -616,6 +619,13 @@ export class UsersService {
 
     if (!user) {
       throw new ErrorException(ErrorExceptionCode.USER_NOT_FOUND);
+    }
+
+    // OAuth-only 账号 password 为 NULL：没有「旧密码」可验证。
+    // 且 argon2.verify 对非法 hash 是 throw 而非返回 false（见 auth.service 注释），
+    // 不拦截会直接 500；必须显式给出业务错误。
+    if (!user.password) {
+      throw new ErrorException(ErrorExceptionCode.PASSWORD_NOT_SET);
     }
 
     const isPasswordValid = await verify(user.password, oldPassword);

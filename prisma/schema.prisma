@@ -24,12 +24,10 @@ model User {
   deletedAt DateTime? @map("deleted_at") @db.DateTime(3) // 软删除：null=未删除，有值=删除时间
 
 
-  email     String    @unique @db.VarChar(255)
+  email     String?   @unique @db.VarChar(255) // 可空：OAuth 用户（如微信）可能无邮箱；非 NULL 值仍互斥，邮箱注册防重不变
   username  String    @unique @db.VarChar(100)
-  password  String    @db.VarChar(255)
+  password  String?    @db.VarChar(255)
   specialRoles  String?   @db.VarChar(255)
-  // GitHub 用户数字 id（存成字符串）。绑定后用它定位用户；唯一。
-  githubId String? @unique @map("github_id") @db.VarChar(32)
 
   @@index([deletedAt]) // 软删除查询索引
 
@@ -37,8 +35,35 @@ model User {
   roles UserRoles[]     
   refreshTokens RefreshToken[]
   posts Post[]
+  identities UserIdentity[] // 第三方登录身份（GitHub / 微信 / ...）
 
   @@map("users")
+}
+
+// ----------------------------------------------------------------------------
+// UserIdentity —— 第三方登录身份表（账号 与 第三方身份 解耦）
+// ----------------------------------------------------------------------------
+// 一个 User 可绑定多家第三方身份（GitHub / 微信公众号 / 微信开放平台 / Google...），
+// 也可解绑换绑；新增平台只需加一个 provider 字符串值，零表结构变更。
+// 登录语义：where provider + providerUid 命中 → 登录该 userId；未命中 → 注册/绑定。
+model UserIdentity {
+  id        BigInt   @id // 雪花ID，代码层生成
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  userId      BigInt @map("user_id")
+  provider    String @db.VarChar(32) // "github" | "wechat_mp" | "wechat_open" | "wechat_mini" | "google" ...
+  providerUid String @map("provider_uid") @db.VarChar(128) // 第三方唯一标识：github 数字id / openid / unionid / sub
+
+  username  String? @db.VarChar(100) // 缓存第三方昵称，避免每次回调都调第三方 API
+  avatarUrl String? @map("avatar_url") @db.VarChar(512)
+  raw       Json?   // 首次授权时的完整 profile 快照，审计与排障用
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUid]) // 一个第三方身份全局只能绑到一个账号
+  @@index([userId]) // 反查：某账号绑定了哪些身份
+  @@map("user_identities")
 }
 
 model Role {

@@ -10,6 +10,7 @@ export const UserExceptionCode = {
   USERNAME_ALREADY_EXISTS: '11406',
   EMAIL_ALREADY_EXISTS: '11407',
   UPDATE_PERMISSION_DENIED: '11408',
+  PASSWORD_NOT_SET: '11409',
 } as const;
 
 export type UserExceptionCode =
@@ -55,5 +56,10 @@ export const UserExceptionMap: Record<UserExceptionCode, ExceptionInfo> = {
     message: '无权限修改该用户信息',
     status: HttpStatus.FORBIDDEN,
     code: UserExceptionCode.UPDATE_PERMISSION_DENIED,
+  },
+  [UserExceptionCode.PASSWORD_NOT_SET]: {
+    message: '当前账号未设置密码（第三方登录账号），无法修改密码',
+    status: HttpStatus.BAD_REQUEST,
+    code: UserExceptionCode.PASSWORD_NOT_SET,
   },
 };
