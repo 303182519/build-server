@@ -19,6 +19,7 @@ import { REDIS_CLIENT } from './cache.tokens';
 import { CacheService } from './cache.service';
 import { HashCacheService } from './hash-cache.service';
 import { LoginAttemptService } from './login-attempt.service';
+import { RedisLockService } from './redis-lock.service';
 
 const buildRedisUrl = (redis: {
   url?: string;
@@ -86,8 +87,15 @@ const buildRedisUrl = (redis: {
     HashCacheService,
     CacheHealthIndicator,
     LoginAttemptService,
+    RedisLockService,
   ],
-  exports: [CacheService, HashCacheService, LoginAttemptService, REDIS_CLIENT],
+  exports: [
+    CacheService,
+    HashCacheService,
+    LoginAttemptService,
+    RedisLockService,
+    REDIS_CLIENT,
+  ],
 })
 export class RedisCacheModule
   implements OnApplicationBootstrap, OnModuleDestroy
