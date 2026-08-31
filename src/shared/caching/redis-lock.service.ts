@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { RedisClientType } from '@keyv/redis';
 import { randomBytes } from 'crypto';
 import { REDIS_CLIENT } from './cache.tokens';
+import { withRedis } from './redis-fallback';
 
 /**
  * RedisLockService —— 基于 `SET NX EX` + Lua 安全释放的分布式锁。
@@ -49,14 +50,22 @@ export class RedisLockService {
    * @param ttlSeconds 锁过期时间。必须略大于「最慢一次临界区执行」，否则任务没跑完锁就被别人抢走
    */
   async acquire(key: string, ttlSeconds: number): Promise<string | null> {
-    if (!this.redis) return null;
     const token = randomBytes(16).toString('hex');
-    // SET key token NX EX ttl：一条命令同时完成「不存在才写」+「设过期」，原子无窗口
-    const result = await this.redis.set(key, token, {
-      NX: true,
-      EX: ttlSeconds,
-    });
-    return result === 'OK' ? token : null;
+    return withRedis(
+      this.redis,
+      async (r) => {
+        // SET key token NX EX ttl：一条命令同时完成「不存在才写」+「设过期」，原子无窗口
+        const result = await r.set(key, token, {
+          NX: true,
+          EX: ttlSeconds,
+        });
+        return result === 'OK' ? token : null;
+      },
+      // Redis 不通（未配置或断连）：按"没抢到"降级，让调用方走旁路。
+      // 绝不能返回非空 token——那会让集群里每个实例都以为自己是"那一个"。
+      null,
+      'RedisLockService.acquire',
+    );
   }
 
   /**
@@ -72,18 +81,25 @@ export class RedisLockService {
    * 真要排查可记日志，但不要抛错（临界区该跑的已经跑了，抛错反而让事务回滚更乱）。
    */
   async release(key: string, token: string): Promise<boolean> {
-    if (!this.redis) return false;
     const lua = `
       if redis.call("GET", KEYS[1]) == ARGV[1] then
         return redis.call("DEL", KEYS[1])
       end
       return 0
     `;
-    const result = (await this.redis.eval(lua, {
-      keys: [key],
-      arguments: [token],
-    })) as number;
-    return result === 1;
+    return withRedis(
+      this.redis,
+      async (r) => {
+        const result = (await r.eval(lua, {
+          keys: [key],
+          arguments: [token],
+        })) as number;
+        return result === 1;
+      },
+      // 释放失败（锁已易主 / Redis 不通）忽略——是 SET NX EX 模式的预期风险，不能污染 fn 的返回/异常
+      false,
+      'RedisLockService.release',
+    );
   }
 
   /**

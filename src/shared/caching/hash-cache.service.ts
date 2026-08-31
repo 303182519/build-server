@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { RedisClientType } from '@keyv/redis';
 import { REDIS_CLIENT } from './cache.tokens';
+import { withRedis } from './redis-fallback';
 
 /**
  * Redis Hash 命令的薄封装。
@@ -54,8 +55,14 @@ export class HashCacheService {
     field: string,
     value: string | number,
   ): Promise<void> {
-    if (!this.redis) return;
-    await this.redis.hSet(key, field, value);
+    await withRedis(
+      this.redis,
+      async (r) => {
+        await r.hSet(key, field, value);
+      },
+      undefined,
+      'HashCacheService.hset',
+    );
   }
 
   /**
@@ -83,14 +90,20 @@ export class HashCacheService {
     mapping: Record<string, string | number>,
     expire?: number,
   ): Promise<void> {
-    if (!this.redis) return;
-    if (expire !== undefined) {
-      await this.redis.hSetEx(key, mapping, {
-        expiration: { type: 'EX', value: expire },
-      });
-    } else {
-      await this.redis.hSet(key, mapping);
-    }
+    await withRedis(
+      this.redis,
+      async (r) => {
+        if (expire !== undefined) {
+          await r.hSetEx(key, mapping, {
+            expiration: { type: 'EX', value: expire },
+          });
+        } else {
+          await r.hSet(key, mapping);
+        }
+      },
+      undefined,
+      'HashCacheService.hmset',
+    );
   }
 
   /**
@@ -100,8 +113,12 @@ export class HashCacheService {
    * const status = await hashCache.hget('build:job:12345', 'status'); // "running"
    */
   async hget(key: string, field: string): Promise<string | null> {
-    if (!this.redis) return null;
-    return this.redis.hGet(key, field);
+    return withRedis(
+      this.redis,
+      (r) => r.hGet(key, field) as Promise<string | null>,
+      null,
+      'HashCacheService.hget',
+    );
   }
 
   /**
@@ -116,8 +133,12 @@ export class HashCacheService {
    */
   async hmget(key: string, fields: string[]): Promise<(string | null)[]> {
     if (fields.length === 0) return [];
-    if (!this.redis) return fields.map(() => null);
-    return this.redis.hmGet(key, fields);
+    return withRedis(
+      this.redis,
+      (r) => r.hmGet(key, fields) as Promise<(string | null)[]>,
+      fields.map(() => null),
+      'HashCacheService.hmget',
+    );
   }
 
   /**
@@ -129,8 +150,12 @@ export class HashCacheService {
    * // { status: "running", progress: "42" }
    */
   async hgetall(key: string): Promise<Record<string, string>> {
-    if (!this.redis) return {};
-    return this.redis.hGetAll(key);
+    return withRedis(
+      this.redis,
+      (r) => r.hGetAll(key) as Promise<Record<string, string>>,
+      {},
+      'HashCacheService.hgetall',
+    );
   }
 
   /**
@@ -142,8 +167,12 @@ export class HashCacheService {
    */
   async hdel(key: string, ...fields: string[]): Promise<number> {
     if (fields.length === 0) return 0;
-    if (!this.redis) return 0;
-    return this.redis.hDel(key, fields);
+    return withRedis(
+      this.redis,
+      (r) => r.hDel(key, fields),
+      0,
+      'HashCacheService.hdel',
+    );
   }
 
   /**
@@ -159,8 +188,12 @@ export class HashCacheService {
     field: string,
     increment: number,
   ): Promise<number> {
-    if (!this.redis) return 0;
-    return this.redis.hIncrBy(key, field, increment);
+    return withRedis(
+      this.redis,
+      (r) => r.hIncrBy(key, field, increment),
+      0,
+      'HashCacheService.hincrby',
+    );
   }
 
   /**
@@ -172,7 +205,13 @@ export class HashCacheService {
    * await hashCache.expire('build:job:12345', 7 * 24 * 3600); // 7 天后自动清理
    */
   async expire(key: string, ttlSeconds: number): Promise<void> {
-    if (!this.redis) return;
-    await this.redis.expire(key, ttlSeconds);
+    await withRedis(
+      this.redis,
+      async (r) => {
+        await r.expire(key, ttlSeconds);
+      },
+      undefined,
+      'HashCacheService.expire',
+    );
   }
 }

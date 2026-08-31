@@ -62,6 +62,24 @@ const buildRedisUrl = (redis: {
           throwOnConnectError: false,
         });
 
+        // 断连期间命令立即 reject，而不是挂进 offline queue 无限等重连——
+        // 否则一个 get 能把请求挂住几十秒，业务层的 withRedis 降级也来不及生效
+        // （URL 直连必为单机 client，不会是 cluster，故可断言）
+        const redisClient = keyvRedis.client as RedisClientType;
+        if (redisClient.options) {
+          redisClient.options.disableOfflineQueue = true;
+        }
+
+        // KeyvRedis.initClient 会把底层 client 的 error 转发到自己身上；
+        // 无人监听 adapter 的 error 事件时 EventEmitter 默认 throw，
+        // 会升级成 uncaughtException 拖崩进程。这里仅日志吞错。
+        keyvRedis.on('error', (err: unknown) => {
+          Logger.warn(
+            `Redis client error: ${err instanceof Error ? err.message : String(err)}`,
+            'RedisCacheModule',
+          );
+        });
+
         return {
           stores: [new Keyv({ store: keyvRedis, namespace: redis.keyPrefix })],
           ttl,
