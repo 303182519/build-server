@@ -49,8 +49,10 @@ export interface GithubConfig {
   clientId?: string;
   /** GitHub OAuth App Client Secret */
   clientSecret?: string;
-  /** 授权回调地址 */
+  /** 授权回调地址（GitHub → 本服务后端） */
   callbackUrl?: string;
+  /** 登录完成后 302 跳到的前端回调页地址（本服务后端 → 前端 SPA） */
+  frontendRedirectUrl?: string;
 }
 
 export interface AppConfig {

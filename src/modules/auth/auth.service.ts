@@ -11,6 +11,9 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { RefreshTokenService } from './refresh-token.service';
 import { LoginAttemptService } from '@/shared/caching/login-attempt.service';
+import { GithubUser } from './github-oauth.provider';
+import { generateSnowflakeId } from '@/shared/utils/snowflake';
+import { randomBytes } from 'crypto';
 import { Console } from 'console';
 
 // 登录时即使「用户不存在」也跑一次 argon2.verify，让响应耗时和「密码错」一致，
@@ -105,6 +108,110 @@ export class AuthService {
     await this.refreshTokenService.revoke(refreshToken);
 
     return { success: true };
+  }
+
+  // GitHub OAuth 登录入口：拿到的 ghUser 已是收窄后的字段，这里只管"找/建账号 + 发本系统 token"。
+  // 与 GitHub 的 HTTP 交互在 GithubOAuthProvider，state 校验在 controller + OAuthStateService。
+  async loginWithGithub(ghUser: GithubUser) {
+    // 1) 查既有身份：provider + providerUid 命中 = 老用户，直接登录该账号。
+    //    UserIdentity 是"账号 ↔ 第三方身份"解耦层，新增平台零表结构变更（见 schema 注释）。
+    let identity = await this.prisma.userIdentity.findUnique({
+      where: {
+        provider_providerUid: { provider: 'github', providerUid: ghUser.id },
+      },
+      select: { userId: true },
+    });
+
+    let userId: bigint;
+    if (identity) {
+      userId = identity.userId;
+    } else {
+      // 2) 新用户建号。并发回调（双击/多标签）下可能撞 (provider, providerUid) 唯一约束，
+      //    此时回退按"老用户"重查一次即可——不把罕见的 TOCTOU 当正常路径，但兜住它。
+      try {
+        userId = await this.createGithubUser(ghUser);
+      } catch (e) {
+        if (
+          e instanceof Prisma.PrismaClientKnownRequestError &&
+          e.code === 'P2002'  // 唯一索引冲突，重复值
+        ) {
+          identity = await this.prisma.userIdentity.findUnique({
+            where: {
+              provider_providerUid: {
+                provider: 'github',
+                providerUid: ghUser.id,
+              },
+            },
+            select: { userId: true },
+          });
+          if (!identity) throw e; // 非 identity 冲突的 P2002：交给上层
+          userId = identity.userId;
+        } else {
+          throw e;
+        }
+      }
+    }
+
+    // 3) 重新拉带角色 + 权限的完整载荷后签发 token，与 login/register 出口形状一致。
+    //    findUniqueOrThrow：上面已确定 userId 存在，无需 null 兜底。
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      include: userWithRolesInclude,
+    });
+    const tokens = await this.refreshTokenService.issue(user);
+    return this.authResponse(user, tokens);
+  }
+
+  // 建号 + 建身份放一个事务：避免"账号建了但身份没建上"的孤儿。
+  // email 留空：GitHub 邮箱未经验证且可能撞已注册账号 → 让 UserIdentity 做登录凭证，
+  //   email 后续走 profile 更新绑定；schema 本就允许 email 可空（OAuth 账号设计意图）。
+  // username 用 gh_<login>：GitHub login 全局唯一，加前缀基本不撞手工注册的；
+  //   万一撞了（有人抢先注册了同名）→ 加随机后缀重试一次，干净又稳。
+  private async createGithubUser(ghUser: GithubUser): Promise<bigint> {
+    const base = `gh_${ghUser.login}`;
+    try {
+      return await this.createUserWithIdentity(base, ghUser);
+    } catch (e) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        // username 撞了 → 加后缀重试一次（identity 冲突的 P2002 由上层 loginWithGithub 兜）
+        return await this.createUserWithIdentity(
+          `${base}_${randomBytes(3).toString('hex')}`,
+          ghUser,
+        );
+      }
+      throw e;
+    }
+  }
+
+  private async createUserWithIdentity(
+    username: string,
+    ghUser: GithubUser,
+  ): Promise<bigint> {
+    return this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          id: BigInt(generateSnowflakeId()),
+          username,
+          password: null, // OAuth-only 账号无密码（与 PASSWORD_NOT_SET 错误语义呼应）
+          email: null,
+        },
+        select: { id: true },
+      });
+      await tx.userIdentity.create({
+        data: {
+          id: BigInt(generateSnowflakeId()),
+          userId: user.id,
+          provider: 'github',
+          providerUid: ghUser.id,
+          username: ghUser.login, // 缓存第三方昵称，回调链路不必再调 GitHub API
+          raw: ghUser as unknown as Prisma.InputJsonValue, // 首次 profile 快照，审计/排障用
+        },
+      });
+      return user.id;
+    });
   }
 
   private authResponse(

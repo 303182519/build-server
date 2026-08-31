@@ -32,6 +32,10 @@ export const CacheKeys = {
   AUTH_LOGIN_FAIL: (email: string) =>
     `auth:loginFail:email=${email.trim().toLowerCase()}`,
 
+  // OAuth 一次性令牌：state 防 CSRF（TTL 10min），ticket 换 token（TTL 60s）
+  AUTH_OAUTH_STATE: (state: string) => `auth:oauthState:state=${state}`,
+  AUTH_OAUTH_TICKET: (ticket: string) => `auth:oauthTicket:ticket=${ticket}`,
+
   // ===== 列表类场景（多参数） =====
   ORDER_LIST: (params: { supplierId: string; page: number; status?: string }) =>
     [

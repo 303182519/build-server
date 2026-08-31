@@ -60,5 +60,9 @@ export const defaultConfig = registerAs('default', (): AppConfig => ({
     callbackUrl:
       process.env.GITHUB_CALLBACK_URL ||
       'http://localhost:3000/auth/github/callback',
-  },
+    // OAuth 回调签发 ticket 后 302 跳到的前端页（Vite 默认 5173）
+    frontendRedirectUrl:
+      process.env.FRONTEND_REDIRECT_URL ||
+      'http://localhost:3001/#/about?type=c',
+    },
 }));

@@ -6,6 +6,9 @@ import { JwtModule } from '@nestjs/jwt';
 import { UsersModule } from '../users/users.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { GithubOAuthProvider } from './github-oauth.provider';
+import { OAuthStateService } from './oauth-state.service';
+import { OAuthTicketService } from './oauth-ticket.service';
 import { RefreshTokenService } from './refresh-token.service';
 import { JwtAuthStrategy } from './strategies/jwt-auth.strategy';
 
@@ -25,6 +28,15 @@ import { JwtAuthStrategy } from './strategies/jwt-auth.strategy';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtAuthStrategy, RefreshTokenService],
+  // GithubOAuthProvider 用 ConfigService（全局）；
+  // OAuthStateService / OAuthTicketService 用 REDIS_CLIENT（由全局 RedisCacheModule 提供，不在本模块 imports）。
+  providers: [
+    AuthService,
+    JwtAuthStrategy,
+    RefreshTokenService,
+    GithubOAuthProvider,
+    OAuthStateService,
+    OAuthTicketService,
+  ],
 })
 export class AuthModule {}

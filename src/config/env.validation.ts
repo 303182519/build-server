@@ -36,6 +36,12 @@ export const validationSchema = Joi.object({
   THROTTLER_TTL: Joi.number().integer().min(1000).default(60000),
   THROTTLER_LIMIT: Joi.number().integer().min(1).default(60),
 
+  // OAuth
+  GITHUB_CLIENT_ID: Joi.string(),
+  GITHUB_CLIENT_SECRET: Joi.string(),
+  GITHUB_CALLBACK_URL: Joi.string(),
+  FRONTEND_REDIRECT_URL: Joi.string(),
+
   // Node Environment
   NODE_ENV: Joi.string()
     .valid('development', 'production', 'test')
