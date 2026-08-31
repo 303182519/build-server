@@ -204,7 +204,7 @@ export class AuthController {
   // 第三步：前端回调页读 location.hash 里的 ticket，fetch 本接口换真正的 token 包。
   // provider 无关——GitHub/微信/微博的回调最终都签发 ticket 到这里兑换，本接口零 provider 耦合。
   // 加新 provider 只动各自的 initiate + callback，不碰这里。
-  @Post('oauth/exchange')
+  @Post('exchange')
   @ApiOperation({ summary: '用 OAuth ticket 兑换 access token + user' })
   @ApiEnvelope(AuthResponseDto)
   @ApiErrorEnvelope(400, '参数校验失败', 'VALIDATION_ERROR')
@@ -239,16 +239,25 @@ export class AuthController {
     };
   }
 
-  // 拼 OAuth 完成后跳到前端回调页的 URL：ticket 作为 hash 路由的 query 参数（#/path?ticket=xxx）。
+  // 拼 OAuth 完成后跳到前端回调页的 URL：ticket 作为 query 参数拼到 hash 或 search 内。
+  // 兼容 hash 路由（#/path?ticket=xxx）和 history 路由（/path?ticket=xxx）两种前端模式。
   // 不带 token / user：URL 会落进浏览器历史 / 崩溃报告 / 扩展，token 进 URL 泄露面大。
-  // ticket 一次性 + 60s TTL，即便泄露也作废。前端读 location.hash 解析 ticket 后立即兑换。
+  // ticket 一次性 + 60s TTL，即便泄露也作废。前端解析 ticket 后立即兑换。
   private buildFrontendCallbackUrl(ticket: string): string {
     const { frontendRedirectUrl } = getConfig(this.configService).github;
     const url = new URL(frontendRedirectUrl);
-    // 拼进 hash 内部，避免与原 hash 路由（#/about?type=c）冲突产生第二个 #
-    const hashPath = url.hash.slice(1); // 去掉前导 #
-    const sep = hashPath.includes('?') ? '&' : '?';
-    url.hash = `${hashPath || '/'}${sep}ticket=${encodeURIComponent(ticket)}`;
+    const ticketParam = `ticket=${encodeURIComponent(ticket)}`;
+    if (url.hash) {
+      // hash 路由模式：拼进 hash 内部，避免与原 hash 路由（#/about?type=c）冲突产生第二个 #
+      const hashPath = url.hash.slice(1); // 去掉前导 #
+      const sep = hashPath.includes('?') ? '&' : '?';
+      url.hash = `${hashPath}${sep}${ticketParam}`;
+    } else {
+      // history 模式：拼进 search（/about?type=callback&ticket=xxx）
+      const sep = url.search ? '&' : '?';
+      url.search = `${url.search}${sep}${ticketParam}`;
+    }
+    console.log('buildFrontendCallbackUrl', url.toString());
     return url.toString();
   }
 
