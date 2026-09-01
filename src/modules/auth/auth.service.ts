@@ -14,7 +14,6 @@ import { LoginAttemptService } from '@/shared/caching/login-attempt.service';
 import { GithubUser } from './github-oauth.provider';
 import { generateSnowflakeId } from '@/shared/utils/snowflake';
 import { randomBytes } from 'crypto';
-import { Console } from 'console';
 
 // 登录时即使「用户不存在」也跑一次 argon2.verify，让响应耗时和「密码错」一致，
 // 避免攻击者靠响应时间判断邮箱是否注册过（用户枚举 / 时序侧信道）。
