@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Post } from './entities/post.entity';
 import { QueryPostDto } from './dto/query-post.dto';
@@ -17,12 +17,18 @@ import { decodeCursor } from './cursor';
 
 @Injectable()
 export class PostsService {
-
-	// 列表缓存的 key 前缀：失效时按前缀 SCAN 清掉所有页/排序/过滤变体
+  // 列表缓存的 key 前缀：失效时按前缀 SCAN 清掉所有页/排序/过滤变体
   private static readonly LIST_PREFIX = 'posts:list:';
-	/** 列表缓存的 SCAN MATCH pattern（不带 namespace），用于 CacheService.invalidatePattern 批量失效 */
+  /** 列表缓存的 SCAN MATCH pattern（不带 namespace），用于 CacheService.invalidatePattern 批量失效 */
   static readonly LIST_PATTERN = PostsService.LIST_PREFIX + '*';
-	// 缓存击穿守卫：同一 key 的「在途加载」共享同一个 Promise，避免高并发下打出 N 条同样的 DB 查询。
+  // Redis 掉线熔断：get/set 失败后进入冷却期，冷却期内请求直接 BYPASS 直连库，
+  // 不重连 Redis、也不逐请求打 warn（否则掉线窗口内每个请求一条日志，造成洪泛）。
+  // 冷却到期后自动重试一次，成功即恢复；再失败则重新进入冷却。
+  private static readonly REDIS_COOLDOWN_MS = 30_000;
+  private redisCoolDownUntil = 0;
+
+  private readonly logger = new Logger(PostsService.name);
+  // 缓存击穿守卫：同一 key 的「在途加载」共享同一个 Promise，避免高并发下打出 N 条同样的 DB 查询。
   // 这是「进程内」一层；跨进程分布式锁留待后续增强。
   private readonly inFlight = new Map<string, Promise<unknown>>();
 
@@ -38,21 +44,46 @@ export class PostsService {
   // 要处理并发一致性，复杂得多，收益在这个场景里不划算）。
 
   async findAll(query: QueryPostDto) {
-    // Redis 不可用（未配置 / 掉线）：绕过缓存直连库，业务不中断
-    if (!this.cache.isRedisEnabled()) {
+    // Redis 未配置或处于掉线冷却期：绕过缓存直连库，业务不中断。
+    // isRedisEnabled() 只看 store 类型，感知不到掉线；掉线靠 get/set 异常触发冷却。
+    if (!this.cache.isRedisEnabled() || this.isRedisCoolingDown()) {
       setCacheState('BYPASS');
       return this.loadList(query);
     }
+
     const key = PostsService.listKey(query);
-    const cached = await this.cache.get<string>(key);
+
+    // 读缓存：掉线时 get 抛异常 → 进入冷却 + 降级直连库，业务不中断
+    let cached: string | undefined;
+    try {
+      cached = await this.cache.get<string>(key);
+    } catch (err) {
+      this.enterRedisCoolDown(`读取缓存失败，降级直连库 key=${key}`, err);
+      setCacheState('BYPASS');
+      return this.loadList(query);
+    }
+
     if (cached) {
       setCacheState('HIT', key);
       return this.deserializeList(cached);
     }
+
     // 列表缓存同样用 coalesce 防击穿。TTL 带「抖动」（雪崩对策）——见 jitteredTtl。
     const result = await this.coalesce(key, () => this.loadList(query));
-    await this.cache.set(key, JSON.stringify(result), this.jitteredTtl(this.listTtl));
-    setCacheState('MISS', key);
+
+    // 回填缓存：掉线时 set 抛异常，但数据已拿到，跳过缓存返回结果，并进入冷却
+    try {
+      await this.cache.set(
+        key,
+        JSON.stringify(result),
+        this.jitteredTtl(this.listTtl),
+      );
+      setCacheState('MISS', key);
+    } catch (err) {
+      this.enterRedisCoolDown(`回填缓存失败，跳过缓存 key=${key}`, err);
+      setCacheState('BYPASS');
+    }
+
     return result;
   }
 
@@ -77,9 +108,18 @@ export class PostsService {
     };
   }
 
+  private isRedisCoolingDown(): boolean {
+    return Date.now() < this.redisCoolDownUntil;
+  }
 
+  private enterRedisCoolDown(reason: string, err: unknown): void {
+    this.logger.warn(
+      `${reason} err=${(err as Error).message}，Redis 进入 ${PostsService.REDIS_COOLDOWN_MS}ms 冷却期`,
+    );
+    this.redisCoolDownUntil = Date.now() + PostsService.REDIS_COOLDOWN_MS;
+  }
 
-	private async loadList(query: QueryPostDto) {
+  private async loadList(query: QueryPostDto) {
     const { items, total } = await this.repo.findMany(query);
     return {
       items,
@@ -91,7 +131,7 @@ export class PostsService {
     };
   }
 
-	// 缓存击穿守卫：同一 key 的并发加载只触发一次真正的 loader，其余调用复用同一个 Promise。
+  // 缓存击穿守卫：同一 key 的并发加载只触发一次真正的 loader，其余调用复用同一个 Promise。
   // 利用 JS 单线程特性——get 与 set 之间没有 await，不会被其它微任务插队，所以不会漏。
   private async coalesce<T>(key: string, loader: () => Promise<T>): Promise<T> {
     const existing = this.inFlight.get(key);
@@ -101,7 +141,7 @@ export class PostsService {
     return promise;
   }
 
-	// 把查询参数稳定序列化成 list 缓存 key。
+  // 把查询参数稳定序列化成 list 缓存 key。
   // ★ 字段顺序固定：否则 {a:1,b:2} 和 {b:2,a:1} 会被当成两个 key，等于没缓存。
   //   明文保留方便 redis-cli 调试；生产 key 过长/含特殊字符时一般再套一层 sha256 哈希。
   private static listKey(query: QueryPostDto): string {
@@ -117,11 +157,11 @@ export class PostsService {
     return `${PostsService.LIST_PREFIX}${normalized}`;
   }
 
-	private get listTtl(): number {
+  private get listTtl(): number {
     return getConfig(this.configService).redis.defaultTtl;
   }
 
-	// 雪崩对策——给 TTL 加随机抖动，错开同一批回填 key 的过期时刻。
+  // 雪崩对策——给 TTL 加随机抖动，错开同一批回填 key 的过期时刻。
   // 否则「一次性预热」的大量 key 会在同一秒集体过期 → 同一瞬间全部 miss → DB 被集中轰击（雪崩）。
   // 抖动幅度取 base 的 10%（至少 10 秒），不引入额外配置项，复用全局 redis.defaultTtl。
   private jitteredTtl(base: number): number {
@@ -129,7 +169,7 @@ export class PostsService {
     return base + Math.floor(Math.random() * (jitter + 1));
   }
 
-	private revivePost(p: Post): Post {
+  private revivePost(p: Post): Post {
     return {
       ...p,
       createdAt: new Date(p.createdAt),
@@ -137,7 +177,7 @@ export class PostsService {
     };
   }
 
-	private deserializeList(raw: string): {
+  private deserializeList(raw: string): {
     items: Post[];
     pagination: { page: number; limit: number; total: number };
   } {
