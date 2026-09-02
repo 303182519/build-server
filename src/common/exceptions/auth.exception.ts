@@ -11,6 +11,8 @@ export const AuthExceptionCode = {
   OAUTH_FAILED: '10405', // 401：用户在 GitHub 授权页点了"拒绝"
   OAUTH_STATE_INVALID: '10406', // 401：state 不存在/已用过/已过期（CSRF 或重复回调）
   OAUTH_TICKET_INVALID: '10407', // 401：ticket 不存在/已用过/已过期（重复兑换或前端太慢）
+  ACCESS_TOKEN_EXPIRED: '10408', // 401：访问令牌已过期（jsonwebtoken 抛 TokenExpiredError）
+  INVALID_ACCESS_TOKEN: '10409', // 401：访问令牌无效（签名/格式错误，或请求未携带令牌）
 } as const;
 
 export type AuthExceptionCode =
@@ -56,5 +58,15 @@ export const AuthExceptionMap: Record<AuthExceptionCode, ExceptionInfo> = {
     message: 'ticket 无效或已过期（可能是重复兑换或兑换超时）',
     status: HttpStatus.UNAUTHORIZED,
     code: AuthExceptionCode.OAUTH_TICKET_INVALID,
+  },
+  [AuthExceptionCode.ACCESS_TOKEN_EXPIRED]: {
+    message: '登录状态已过期，请重新登录',
+    status: HttpStatus.UNAUTHORIZED,
+    code: AuthExceptionCode.ACCESS_TOKEN_EXPIRED,
+  },
+  [AuthExceptionCode.INVALID_ACCESS_TOKEN]: {
+    message: '访问令牌无效或未提供，请重新登录',
+    status: HttpStatus.UNAUTHORIZED,
+    code: AuthExceptionCode.INVALID_ACCESS_TOKEN,
   },
 };

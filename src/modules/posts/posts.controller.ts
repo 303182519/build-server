@@ -88,7 +88,6 @@ export class PostsController {
   @ApiOperation({ summary: '删除文章（需登录 + 作者本人或 SuperAdmin）' })
   @idParam
   @ApiEnvelope(DeletedResponseDto)
-  @ApiErrorEnvelope(401, '未认证', 'UNAUTHORIZED')
   @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.POST_FORBIDDEN)
   @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.POST_NOT_FOUND)
   remove(

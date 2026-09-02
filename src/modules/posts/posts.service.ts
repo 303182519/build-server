@@ -243,7 +243,9 @@ export class PostsService {
       await this.cache.invalidatePattern(PostsService.LIST_PATTERN);
     } catch (err) {
       this.enterRedisCoolDown(
-        `缓存失效失败${postId ? ` postId=${postId}` : ''}`, err);
+        `缓存失效失败${postId ? ` postId=${postId}` : ''}`,
+        err,
+      );
     }
   }
 
