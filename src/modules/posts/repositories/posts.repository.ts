@@ -25,11 +25,11 @@ export interface PostsRepository {
   ): Promise<CursorResult>;
 
   // 按 ID 查单篇。不存在返回 null，调用方决定抛 404 还是静默跳过。
-  findById(id: string): Promise<Post | null>;
+  findById(id: bigint): Promise<Post | null>;
 
   // 热门排行榜 DB 兆底：按浏览数降序取 Top N（仅 published）。
   findTopByViewCount(limit: number): Promise<Post[]>;
 
   // 浏览计数原子自增（可交换操作，无需乐观锁 / 行锁）。返回 null = 记录不存在。
-  incrementViewCount(id: string): Promise<Post | null>;
+  incrementViewCount(id: bigint): Promise<Post | null>;
 }

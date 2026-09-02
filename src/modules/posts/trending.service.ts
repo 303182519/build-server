@@ -27,9 +27,13 @@ export class TrendingService {
   constructor(private readonly sortedSet: SortedSetCacheService) {}
 
   /** 某文章浏览 +1 → 给它在榜上的分数 +1。原子，多实例并发安全。 */
-  async bump(postId: string): Promise<void> {
+  async bump(postId: bigint): Promise<void> {
     // SortedSetCacheService 内部 via withRedis() 统一降级：Redis 不通静默 no-op
-    await this.sortedSet.zincrby(CacheKeys.TRENDING_POSTS, 1, postId);
+    await this.sortedSet.zincrby(
+      CacheKeys.TRENDING_POSTS,
+      1,
+      postId.toString(),
+    );
   }
 
   /** 某文章被删 → 从榜上摘掉，免得排行榜里挂着已删除的 id。 */

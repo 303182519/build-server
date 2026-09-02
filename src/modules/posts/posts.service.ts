@@ -157,7 +157,7 @@ export class PostsService {
   // ★ 这里故意【不】失效单篇缓存：浏览数是低价值、强写入（每次访问都 +1）的字段，
   //   如果每次浏览都清缓存，findOne 的缓存基本就废了。我们接受 viewCount 在 TTL 内「最终一致」
   //   （最多滞后 postTtl 秒）——对「显示用」的计数完全够。这是「能接受多旧的陈旧数据」的典型权衡。
-  async incrementView(id: string) {
+  async incrementView(id: bigint) {
     const post = await this.repo.incrementViewCount(id);
     if (!post) {
       throw new ErrorException(ErrorExceptionCode.POST_NOT_FOUND);
@@ -200,7 +200,7 @@ export class PostsService {
   // ── Cache-Aside 的内部零件 ────────────────────────────────────────────
 
   private async loadById(id: string): Promise<Post> {
-    const post = await this.repo.findById(id);
+    const post = await this.repo.findById(BigInt(id));
     if (!post) throw new ErrorException(ErrorExceptionCode.POST_NOT_FOUND);
     return post;
   }

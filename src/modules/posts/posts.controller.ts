@@ -73,6 +73,7 @@ export class PostsController {
 
   // Day 29：浏览计数 +1（原子自增，无需锁）。公开——匿名访客也能贡献浏览数。
   @Post(':id/view')
+  @Public()
   @ApiOperation({ summary: '浏览计数 +1（原子自增）' })
   @idParam
   @ApiEnvelope(PostResponseDto)

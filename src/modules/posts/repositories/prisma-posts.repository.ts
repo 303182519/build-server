@@ -182,9 +182,9 @@ export class PrismaPostsRepository implements PostsRepository {
     return { items: page.map((r) => this.toDomain(r)), nextCursor };
   }
 
-  async findById(id: string): Promise<Post | null> {
+  async findById(id: bigint): Promise<Post | null> {
     const row = await this.prisma.post.findUnique({
-      where: { id: BigInt(id) },
+      where: { id },
       select: PrismaPostsRepository.postSelect,
     });
     return row ? this.toDomain(row) : null;
@@ -200,30 +200,19 @@ export class PrismaPostsRepository implements PostsRepository {
     return rows.map((r) => this.toDomain(r));
   }
 
-  async incrementViewCount(id: string): Promise<Post | null> {
-    try {
-      // 原子自增，没有"读-改-写"竞态，不需要乐观锁 / 行锁。
-      // ★ 故意走裸 SQL 而不是 prisma.post.update：浏览不是内容变更，不该改 updated_at。
-      //   而 Prisma 的 @updatedAt 会在**任何** update/updateMany 时把 updated_at 设成 now()，
-      //   那样既不符合语义，还会让 sortBy=updatedAt 的游标分页因为浏览而漂移。
-      //   裸 SQL 绕开 @updatedAt；RETURNING 用列别名对齐 PrismaPost，复用 toDomain。
-      const rows = await this.prisma.$queryRaw<PrismaPost[]>`
-        UPDATE posts SET view_count = view_count + 1
-        WHERE id = ${id}::uuid
-        RETURNING id, title, slug, content, tags, status, meta, version,
-                  view_count AS "viewCount",
-                  created_at AS "createdAt",
-                  updated_at AS "updatedAt"
-      `;
-      return rows.length > 0 ? this.toDomain(rows[0]) : null;
-    } catch (e) {
-      if (
-        e instanceof Prisma.PrismaClientKnownRequestError &&
-        e.code === 'P2025'
-      ) {
-        return null;
-      }
-      throw e;
-    }
+  async incrementViewCount(id: bigint): Promise<Post | null> {
+    // 原子自增：没有"读-改-写"竞态，不需要乐观锁 / 行锁。
+    // ★ 故意走裸 SQL 而不是 prisma.post.update：浏览不是内容变更，不该改 updated_at。
+    //   而 Prisma 的 @updatedAt 会在**任何** update/updateMany 时把 updated_at 设成 now()，
+    //   那样既不符合语义，还会让 sortBy=updatedAt 的游标分页因为浏览而漂移。
+    //   裸 SQL 绕开 @updatedAt；$executeRaw 返回受影响行数，0 = 记录不存在。
+    const affected = await this.prisma.$executeRaw`
+      UPDATE posts SET view_count = view_count + 1
+      WHERE id = ${id}
+    `;
+    if (affected === 0) return null;
+    // 标签是多对多关系（post_tags 中间表），裸 SQL 的 RETURNING 拿不到 postTags 关联；
+    // 复用 findById 按 postSelect 拉全量并 toDomain，保证返回形状与其它出口一致。
+    return this.findById(id);
   }
 }
