@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Post } from './entities/post.entity';
 import { QueryPostDto } from './dto/query-post.dto';
@@ -14,6 +14,7 @@ import {
   type PostsRepository,
 } from './repositories/posts.repository';
 import { decodeCursor } from './cursor';
+import { TrendingService } from './trending.service';
 
 @Injectable()
 export class PostsService {
@@ -36,7 +37,54 @@ export class PostsService {
     @Inject(POSTS_REPOSITORY) private readonly repo: PostsRepository,
     private readonly cache: CacheService,
     private readonly configService: ConfigService,
+
+    @Optional() private readonly trendingService?: TrendingService,
   ) {}
+
+  // 单篇缓存的 key 前缀
+  private static readonly POST_PREFIX = 'posts:post:id=';
+
+  async findOne(id: string): Promise<Post> {
+    // Redis 未配置或处于掉线冷却期：绕过缓存直连库
+    if (!this.cache.isRedisEnabled() || this.isRedisCoolingDown()) {
+      return this.loadPost(id);
+    }
+
+    const key = `${PostsService.POST_PREFIX}${id}`;
+
+    let cached: string | undefined;
+    try {
+      cached = await this.cache.get<string>(key);
+    } catch (err) {
+      this.enterRedisCoolDown(`读取单篇缓存失败 key=${key}`, err);
+      return this.loadPost(id);
+    }
+
+    if (cached) {
+      const post = this.revivePost(JSON.parse(cached) as Post);
+      return post;
+    }
+
+    const post = await this.loadPost(id);
+
+    try {
+      await this.cache.set(
+        key,
+        JSON.stringify(post),
+        this.jitteredTtl(this.listTtl),
+      );
+    } catch (err) {
+      this.enterRedisCoolDown(`回填单篇缓存失败 key=${key}`, err);
+    }
+
+    return post;
+  }
+
+  private async loadPost(id: string): Promise<Post> {
+    const post = await this.repo.findById(id);
+    if (!post) throw new ErrorException(ErrorExceptionCode.POST_NOT_FOUND);
+    return post;
+  }
 
   // ── 读路径：Cache-Aside（旁路缓存） ────────────────────────────────────
   // 思路就一句：「读的时候先问缓存，没有再问数据库，拿到后顺手回填缓存」。
@@ -106,6 +154,29 @@ export class PostsService {
         limit: query.limit ?? 20,
       },
     };
+  }
+
+  // 热门文章排行榜（GET /posts/trending）。
+  // 先取 ZSET 的 Top N（快、不打 DB）；榜空 / Redis 不可用 → 回退到 DB 按 view_count 取（兜底）。
+  async trending(limit: number): Promise<{ items: Post[] }> {
+    const ids = this.trendingService
+      ? await this.trendingService.top(limit)
+      : [];
+    if (ids.length > 0) {
+      // 拿 id 后逐篇 findOne（命中单篇缓存，几乎不查库）。榜里可能挂着已删的 id → 404 跳过并清榜。
+      const items: Post[] = [];
+      for (const { id } of ids) {
+        try {
+          items.push(await this.findOne(id));
+        } catch {
+          await this.trendingService?.drop(id); // 榜里残留的幽灵成员，清掉
+        }
+        if (items.length >= limit) break;
+      }
+      if (items.length > 0) return { items };
+    }
+    // 兜底：直查 DB 按 view_count 取 Top N
+    return { items: await this.repo.findTopByViewCount(limit) };
   }
 
   private isRedisCoolingDown(): boolean {

@@ -31,7 +31,7 @@ export class PostsController {
   }
 
   // 游标分页。和下面的 search / debug 一样，静态路径必须放在 :id 前面，
-  // 否则 'feed' 会被当成 :id 交给 ParseUUIDPipe → 400。
+  // 否则 'feed' 会被当成 :id 交给 → 400。
   @Get('feed')
   @Public()
   @ApiOperation({ summary: '信息流（cursor 分页）' })
@@ -39,5 +39,19 @@ export class PostsController {
   @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.INVALID_CURSOR)
   feed(@Query() query: QueryPostDto) {
     return this.posts.feed(query);
+  }
+
+  // 热门文章排行榜（Sorted Set）。Redis ZSET 不可用时自动回退到 DB 按 view_count。
+  // ★ 静态路径，必须放在 :id 前面，否则 'trending' 会被 当成 id → 400。
+  @Get('trending')
+  @Public()
+  @ApiOperation({ summary: '热门文章排行榜（按浏览数，ZSET 加速，DB 兜底）' })
+  @ApiEnvelope(PostListResponseDto)
+  trending(@Query('limit') rawLimit?: string) {
+    // query string 一律是字符串：解析 + 钳制到 [1, 50]，非法值退回默认 10。
+    const n = Number(rawLimit);
+    const limit =
+      Number.isFinite(n) && n > 0 ? Math.min(Math.trunc(n), 50) : 10;
+    return this.posts.trending(limit);
   }
 }

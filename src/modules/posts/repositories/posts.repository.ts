@@ -23,4 +23,10 @@ export interface PostsRepository {
     query: QueryPostDto,
     cursor: CursorPayload | null,
   ): Promise<CursorResult>;
+
+  // 按 ID 查单篇。不存在返回 null，调用方决定抛 404 还是静默跳过。
+  findById(id: string): Promise<Post | null>;
+
+  // 热门排行榜 DB 兆底：按浏览数降序取 Top N（仅 published）。
+  findTopByViewCount(limit: number): Promise<Post[]>;
 }

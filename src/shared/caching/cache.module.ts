@@ -21,6 +21,7 @@ import { CacheService } from './cache.service';
 import { HashCacheService } from './hash-cache.service';
 import { LoginAttemptService } from './login-attempt.service';
 import { RedisLockService } from './redis-lock.service';
+import { SortedSetCacheService } from './sorted-set-cache.service';
 
 const buildRedisUrl = (redis: {
   url?: string;
@@ -121,6 +122,7 @@ const buildRedisUrl = (redis: {
     KeyPrefixer,
     LoginAttemptService,
     RedisLockService,
+    SortedSetCacheService,
   ],
   exports: [
     CacheService,
@@ -128,6 +130,7 @@ const buildRedisUrl = (redis: {
     KeyPrefixer,
     LoginAttemptService,
     RedisLockService,
+    SortedSetCacheService,
     REDIS_CLIENT,
   ],
 })

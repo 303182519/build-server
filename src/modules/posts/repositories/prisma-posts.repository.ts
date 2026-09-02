@@ -181,4 +181,22 @@ export class PrismaPostsRepository implements PostsRepository {
 
     return { items: page.map((r) => this.toDomain(r)), nextCursor };
   }
+
+  async findById(id: string): Promise<Post | null> {
+    const row = await this.prisma.post.findUnique({
+      where: { id: BigInt(id) },
+      select: PrismaPostsRepository.postSelect,
+    });
+    return row ? this.toDomain(row) : null;
+  }
+
+  async findTopByViewCount(limit: number): Promise<Post[]> {
+    const rows = await this.prisma.post.findMany({
+      where: { status: 'published' },
+      select: PrismaPostsRepository.postSelect,
+      orderBy: [{ viewCount: 'desc' }, { id: 'asc' }],
+      take: limit,
+    });
+    return rows.map((r) => this.toDomain(r));
+  }
 }
