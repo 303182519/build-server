@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { RedisClientType } from '@keyv/redis';
 import { randomBytes } from 'crypto';
+import { KeyPrefixer } from './cache.prefixer';
 import { REDIS_CLIENT } from './cache.tokens';
 import { withRedis } from './redis-fallback';
 
@@ -38,6 +39,7 @@ import { withRedis } from './redis-fallback';
 export class RedisLockService {
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: RedisClientType | null,
+    private readonly prefixer: KeyPrefixer,
   ) {}
 
   /**
@@ -50,12 +52,13 @@ export class RedisLockService {
    * @param ttlSeconds 锁过期时间。必须略大于「最慢一次临界区执行」，否则任务没跑完锁就被别人抢走
    */
   async acquire(key: string, ttlSeconds: number): Promise<string | null> {
+    const redisKey = this.prefixer.prefix(key);
     const token = randomBytes(16).toString('hex');
     return withRedis(
       this.redis,
       async (r) => {
         // SET key token NX EX ttl：一条命令同时完成「不存在才写」+「设过期」，原子无窗口
-        const result = await r.set(key, token, {
+        const result = await r.set(redisKey, token, {
           NX: true,
           EX: ttlSeconds,
         });
@@ -81,6 +84,7 @@ export class RedisLockService {
    * 真要排查可记日志，但不要抛错（临界区该跑的已经跑了，抛错反而让事务回滚更乱）。
    */
   async release(key: string, token: string): Promise<boolean> {
+    const redisKey = this.prefixer.prefix(key);
     const lua = `
       if redis.call("GET", KEYS[1]) == ARGV[1] then
         return redis.call("DEL", KEYS[1])
@@ -91,7 +95,7 @@ export class RedisLockService {
       this.redis,
       async (r) => {
         const result = (await r.eval(lua, {
-          keys: [key],
+          keys: [redisKey],
           arguments: [token],
         })) as number;
         return result === 1;

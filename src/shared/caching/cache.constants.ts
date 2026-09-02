@@ -9,8 +9,18 @@ export const hashCacheToken = (token: string): string => {
 };
 
 /**
- * 改造后 - 更规范的企业级命名
+ * CacheKeys — 跨模块共享的缓存 Key 工厂。
  *
+ * 适用边界：
+ *   ✅ 跨模块会被多处引用的 key（auth / rbac / 全局配置等）
+ *   ✅ 参数少（≤3）、redis-cli 可读性重要的场景
+ *
+ * 不适用：
+ *   ❌ 仅模块内部使用的 key — 放在模块本地 factory 里（如 PostsService.listKey）
+ *   ❌ 参数多（≥4）的查询 key — 用 JSON 序列化更简洁，字段不容易漏
+ *   ❌ 直连 Redis 但不走 CacheService 的 key（如 throttler）— 走 KeyPrefixer.prefix() 手动加 namespace
+ *
+ * 最终落盘 Key = `${KeyPrefixer.namespace}:${这里的返回值}`（CacheService 走 KeyvRedis 会自动加）。
  */
 export const CacheKeys = {
   // 单值ID场景，短形式可接受，但建议统一
@@ -36,14 +46,4 @@ export const CacheKeys = {
   AUTH_OAUTH_STATE: (state: string) => `auth:oauthState:state=${state}`,
   AUTH_OAUTH_TICKET: (ticket: string) => `auth:oauthTicket:ticket=${ticket}`,
 
-  // ===== 列表类场景（多参数） =====
-  ORDER_LIST: (params: { supplierId: string; page: number; status?: string }) =>
-    [
-      'order:list',
-      `supplierId=${params.supplierId}`,
-      `page=${params.page}`,
-      params.status !== undefined ? `status=${params.status}` : '',
-    ]
-      .filter(Boolean)
-      .join(':'),
 } as const;

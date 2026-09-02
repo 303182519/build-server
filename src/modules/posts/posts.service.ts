@@ -20,6 +20,8 @@ export class PostsService {
 
 	// 列表缓存的 key 前缀：失效时按前缀 SCAN 清掉所有页/排序/过滤变体
   private static readonly LIST_PREFIX = 'posts:list:';
+	/** 列表缓存的 SCAN MATCH pattern（不带 namespace），用于 CacheService.invalidatePattern 批量失效 */
+  static readonly LIST_PATTERN = PostsService.LIST_PREFIX + '*';
 	// 缓存击穿守卫：同一 key 的「在途加载」共享同一个 Promise，避免高并发下打出 N 条同样的 DB 查询。
   // 这是「进程内」一层；跨进程分布式锁留待后续增强。
   private readonly inFlight = new Map<string, Promise<unknown>>();

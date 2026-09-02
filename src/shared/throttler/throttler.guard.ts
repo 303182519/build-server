@@ -11,15 +11,17 @@ import type { AuthRequest } from '@/types/express';
  */
 @Injectable()
 export class AppThrottlerGuard extends ThrottlerGuard {
+  /** 限流 tracker 前缀：user:{userId} 或 ip:{ip}，最终会拼到 throttle:counter:{name}:{tracker} */
+  private static readonly TRACKER_USER_PREFIX = 'user:';
+  private static readonly TRACKER_IP_PREFIX = 'ip:';
+
   protected getTracker(req: AuthRequest): Promise<string> {
     const userId = this.getUserId(req);
 
     if (userId) {
-      return Promise.resolve(`user:${userId}`);
+      return Promise.resolve(`${AppThrottlerGuard.TRACKER_USER_PREFIX}${userId}`);
     }
-    console.log('ip', req.ip);
-    console.log('ips[0]', req.ips);
-    return Promise.resolve(`ip:${req.ips[0] || req.ip}`);
+    return Promise.resolve(`${AppThrottlerGuard.TRACKER_IP_PREFIX}${req.ips[0] || req.ip}`);
   }
 
   private getUserId(req: AuthRequest): string | undefined {

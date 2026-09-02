@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { RedisClientType } from '@keyv/redis';
+import { KeyPrefixer } from './cache.prefixer';
 import { REDIS_CLIENT } from './cache.tokens';
 import { withRedis } from './redis-fallback';
 
@@ -41,6 +42,7 @@ import { withRedis } from './redis-fallback';
 export class HashCacheService {
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: RedisClientType | null,
+    private readonly prefixer: KeyPrefixer,
   ) {}
 
   /**
@@ -55,10 +57,11 @@ export class HashCacheService {
     field: string,
     value: string | number,
   ): Promise<void> {
+    const redisKey = this.prefixer.prefix(key);
     await withRedis(
       this.redis,
       async (r) => {
-        await r.hSet(key, field, value);
+        await r.hSet(redisKey, field, value);
       },
       undefined,
       'HashCacheService.hset',
@@ -90,15 +93,16 @@ export class HashCacheService {
     mapping: Record<string, string | number>,
     expire?: number,
   ): Promise<void> {
+    const redisKey = this.prefixer.prefix(key);
     await withRedis(
       this.redis,
       async (r) => {
         if (expire !== undefined) {
-          await r.hSetEx(key, mapping, {
+          await r.hSetEx(redisKey, mapping, {
             expiration: { type: 'EX', value: expire },
           });
         } else {
-          await r.hSet(key, mapping);
+          await r.hSet(redisKey, mapping);
         }
       },
       undefined,
@@ -113,9 +117,10 @@ export class HashCacheService {
    * const status = await hashCache.hget('build:job:12345', 'status'); // "running"
    */
   async hget(key: string, field: string): Promise<string | null> {
+    const redisKey = this.prefixer.prefix(key);
     return withRedis(
       this.redis,
-      (r) => r.hGet(key, field) as Promise<string | null>,
+      (r) => r.hGet(redisKey, field) as Promise<string | null>,
       null,
       'HashCacheService.hget',
     );
@@ -133,9 +138,10 @@ export class HashCacheService {
    */
   async hmget(key: string, fields: string[]): Promise<(string | null)[]> {
     if (fields.length === 0) return [];
+    const redisKey = this.prefixer.prefix(key);
     return withRedis(
       this.redis,
-      (r) => r.hmGet(key, fields) as Promise<(string | null)[]>,
+      (r) => r.hmGet(redisKey, fields) as Promise<(string | null)[]>,
       fields.map(() => null),
       'HashCacheService.hmget',
     );
@@ -150,9 +156,10 @@ export class HashCacheService {
    * // { status: "running", progress: "42" }
    */
   async hgetall(key: string): Promise<Record<string, string>> {
+    const redisKey = this.prefixer.prefix(key);
     return withRedis(
       this.redis,
-      (r) => r.hGetAll(key) as Promise<Record<string, string>>,
+      (r) => r.hGetAll(redisKey) as Promise<Record<string, string>>,
       {},
       'HashCacheService.hgetall',
     );
@@ -167,9 +174,10 @@ export class HashCacheService {
    */
   async hdel(key: string, ...fields: string[]): Promise<number> {
     if (fields.length === 0) return 0;
+    const redisKey = this.prefixer.prefix(key);
     return withRedis(
       this.redis,
-      (r) => r.hDel(key, fields),
+      (r) => r.hDel(redisKey, fields),
       0,
       'HashCacheService.hdel',
     );
@@ -188,9 +196,10 @@ export class HashCacheService {
     field: string,
     increment: number,
   ): Promise<number> {
+    const redisKey = this.prefixer.prefix(key);
     return withRedis(
       this.redis,
-      (r) => r.hIncrBy(key, field, increment),
+      (r) => r.hIncrBy(redisKey, field, increment),
       0,
       'HashCacheService.hincrby',
     );
@@ -205,10 +214,11 @@ export class HashCacheService {
    * await hashCache.expire('build:job:12345', 7 * 24 * 3600); // 7 天后自动清理
    */
   async expire(key: string, ttlSeconds: number): Promise<void> {
+    const redisKey = this.prefixer.prefix(key);
     await withRedis(
       this.redis,
       async (r) => {
-        await r.expire(key, ttlSeconds);
+        await r.expire(redisKey, ttlSeconds);
       },
       undefined,
       'HashCacheService.expire',

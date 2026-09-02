@@ -15,6 +15,7 @@ import {
   OnModuleDestroy,
 } from '@nestjs/common';
 import { CacheHealthIndicator } from './cache.health';
+import { KeyPrefixer } from './cache.prefixer';
 import { REDIS_CLIENT } from './cache.tokens';
 import { CacheService } from './cache.service';
 import { HashCacheService } from './hash-cache.service';
@@ -117,12 +118,14 @@ const buildRedisUrl = (redis: {
     CacheService,
     HashCacheService,
     CacheHealthIndicator,
+    KeyPrefixer,
     LoginAttemptService,
     RedisLockService,
   ],
   exports: [
     CacheService,
     HashCacheService,
+    KeyPrefixer,
     LoginAttemptService,
     RedisLockService,
     REDIS_CLIENT,
