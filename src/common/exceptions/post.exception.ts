@@ -5,6 +5,7 @@ export const PostExceptionCode = {
   POST_NOT_FOUND: '13401',
   SLUG_TAKEN: '13402',
   POST_ARCHIVED: '13403',
+  INVALID_CURSOR: '13404',
 } as const;
 
 export type PostExceptionCode =
@@ -25,5 +26,10 @@ export const PostExceptionMap: Record<PostExceptionCode, ExceptionInfo> = {
     message: 'Post 已归档，不能再修改',
     status: HttpStatus.CONFLICT,
     code: PostExceptionCode.POST_ARCHIVED,
+  },
+  [PostExceptionCode.INVALID_CURSOR]: {
+    message: 'cursor 参数非法',
+    status: HttpStatus.BAD_REQUEST,
+    code: PostExceptionCode.INVALID_CURSOR,
   },
 };

@@ -3,6 +3,10 @@ import { ConfigService } from '@nestjs/config';
 import type { Post } from './entities/post.entity';
 import { QueryPostDto } from './dto/query-post.dto';
 import { setCacheState } from '@/common/request-context';
+import {
+  ErrorException,
+  ErrorExceptionCode,
+} from '@/common/exceptions/error.exception';
 import { CacheService } from '@/shared/caching/cache.service';
 import { getConfig } from '@/config/configuration';
 import {
@@ -57,11 +61,7 @@ export class PostsService {
     const cursor = query.cursor ? decodeCursor(query.cursor) : null;
     // 传了 cursor 却解不出来 → 不是"第一页"，是非法输入，直接 400（别静默当第一页）
     if (query.cursor && !cursor) {
-      throw new BusinessException(
-        ErrorCodes.VALIDATION_ERROR,
-        'cursor 参数非法',
-        HttpStatus.BAD_REQUEST,
-      );
+      throw new ErrorException(ErrorExceptionCode.INVALID_CURSOR);
     }
     const { items, nextCursor } = await this.repo.findByCursor(query, cursor);
     return {
