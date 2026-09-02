@@ -25,7 +25,7 @@ export class RefreshTokenService {
   // client 可传入事务句柄 tx：rotate 把"作废旧的 + 写新的"放进同一事务时需要
   async issue(user: User, client: Prisma.TransactionClient = this.prisma) {
     const payload: JwtPayload = {
-      sub: user.id.toString(),
+      sub: user.id.toString()
     };
 
     const { jwt } = getConfig(this.configService);

@@ -73,6 +73,16 @@ export class PostsController {
     return this.posts.triggerBoom();
   }
 
+  // ParseUUIDPipe 校验路径参数格式，非法 UUID 直接 400，不会进 Service
+  @Get(':id')
+  @ApiOperation({ summary: '按 id 查单篇' })
+  @idParam
+  @ApiEnvelope(PostResponseDto)
+  @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.POST_NOT_FOUND)
+  findOne(@Param('id', ParseSnowflakePipe) id: bigint) {
+    return this.posts.findOne(id.toString());
+  }
+
   // Day 29：浏览计数 +1（原子自增，无需锁）。公开——匿名访客也能贡献浏览数。
   @Post(':id/view')
   @Public()
@@ -90,10 +100,7 @@ export class PostsController {
   @ApiEnvelope(DeletedResponseDto)
   @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.POST_FORBIDDEN)
   @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.POST_NOT_FOUND)
-  remove(
-    @Param('id', ParseSnowflakePipe) id: bigint,
-    @UserInfo() user: User,
-  ) {
+  remove(@Param('id', ParseSnowflakePipe) id: bigint, @UserInfo() user: User) {
     return this.posts.remove(id, user);
   }
 }
