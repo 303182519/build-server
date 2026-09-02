@@ -47,6 +47,7 @@ export class PostsService {
   async findOne(id: string): Promise<Post> {
     // Redis 未配置或处于掉线冷却期：绕过缓存直连库
     if (!this.cache.isRedisEnabled() || this.isRedisCoolingDown()) {
+      setCacheState('BYPASS');
       return this.loadPost(id);
     }
 
@@ -57,12 +58,13 @@ export class PostsService {
       cached = await this.cache.get<string>(key);
     } catch (err) {
       this.enterRedisCoolDown(`读取单篇缓存失败 key=${key}`, err);
+      setCacheState('BYPASS');
       return this.loadPost(id);
     }
 
     if (cached) {
-      const post = this.revivePost(JSON.parse(cached) as Post);
-      return post;
+      setCacheState('HIT', key);
+      return this.revivePost(JSON.parse(cached) as Post);
     }
 
     const post = await this.loadPost(id);
@@ -73,8 +75,10 @@ export class PostsService {
         JSON.stringify(post),
         this.jitteredTtl(this.listTtl),
       );
+      setCacheState('MISS', key);
     } catch (err) {
       this.enterRedisCoolDown(`回填单篇缓存失败 key=${key}`, err);
+      setCacheState('BYPASS');
     }
 
     return post;
