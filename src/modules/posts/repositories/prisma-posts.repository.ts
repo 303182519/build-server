@@ -1,14 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/shared/database/prisma/prisma.service';
-import { 
-  Prisma,
-   type Post as PrismaPost,
-} from '@prisma/client';
-import type {
-  Post,
-  PostMeta,
-  PostStatus,
-} from '../entities/post.entity';
+import { Prisma, type Post as PrismaPost } from '@prisma/client';
+import type { Post, PostMeta, PostStatus } from '../entities/post.entity';
 import type { QueryPostDto } from '../dto/query-post.dto';
 import type { PostsRepository, CursorResult } from './posts.repository';
 import { encodeCursor, type CursorPayload } from '../cursor';
@@ -104,10 +97,7 @@ export class PrismaPostsRepository implements PostsRepository {
         select: PrismaPostsRepository.postSelect,
         // sortBy 已在 QueryPostDto 白名单校验过，动态拼 key 是安全的。
         // 追加 id 作为稳定次级排序键：主排序键相等时避免分页漂移 / 漏行 / 重复行。
-        orderBy: [
-          { [sortBy]: order } as Prisma.PostOrderByWithRelationInput,
-          { id: 'asc' },
-        ],
+        orderBy: [{ [sortBy]: order }, { id: 'asc' }],
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -122,7 +112,7 @@ export class PrismaPostsRepository implements PostsRepository {
     const v =
       sortBy === 'title'
         ? row.title
-        : (row[sortBy as 'createdAt' | 'updatedAt'] as Date).toISOString();
+        : row[sortBy as 'createdAt' | 'updatedAt'].toISOString();
     return encodeCursor({ v, id: row.id.toString() });
   }
 
@@ -149,7 +139,7 @@ export class PrismaPostsRepository implements PostsRepository {
           {
             [sortBy]: v,
             id: { [op]: cursor.id },
-          }
+          },
         ],
       };
       // 和 keyword 的 OR 共存：放进 AND，避免两个顶层 OR 互相覆盖
@@ -161,7 +151,7 @@ export class PrismaPostsRepository implements PostsRepository {
       where,
       select: PrismaPostsRepository.postSelect,
       orderBy: [
-        { [sortBy]: order } as Prisma.PostOrderByWithRelationInput,
+        { [sortBy]: order },
         { id: order }, // 次级键方向要和主键一致，keyset 才自洽
       ],
       take: limit + 1,

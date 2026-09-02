@@ -19,5 +19,8 @@ export interface PostsRepository {
   findMany(query: QueryPostDto): Promise<{ items: Post[]; total: number }>;
 
   // 游标 / keyset 分页（GET /posts/feed）：只能顺序往下翻，但稳定、深翻不掉速。
-  findByCursor(query: QueryPostDto, cursor: CursorPayload | null): Promise<CursorResult>;
+  findByCursor(
+    query: QueryPostDto,
+    cursor: CursorPayload | null,
+  ): Promise<CursorResult>;
 }
