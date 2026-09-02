@@ -1,9 +1,12 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { ApiOperation } from '@nestjs/swagger';
-import { ApiEnvelope } from '@/common/decorators/api-envelope.decorator';
+import { ApiEnvelope, ApiErrorEnvelope } from '@/common/decorators/api-envelope.decorator';
 import { Public } from '@/common/decorators/jwt-auth.decorator';
 import { PostsService } from './posts.service';
-import { PostListResponseDto } from './dto/post-response.dto';
+import { 
+  PostListResponseDto,
+  PostFeedResponseDto
+} from './dto/post-response.dto';
 import { QueryPostDto } from './dto/query-post.dto';
 
 @Controller('posts')
@@ -17,5 +20,15 @@ export class PostsController {
   @ApiEnvelope(PostListResponseDto)
   findAll(@Query() query: QueryPostDto) {
     return this.posts.findAll(query);
+  }
+
+  // 游标分页。和下面的 search / debug 一样，静态路径必须放在 :id 前面，
+  // 否则 'feed' 会被当成 :id 交给 ParseUUIDPipe → 400。
+  @Get('feed')
+  @ApiOperation({ summary: '信息流（cursor 分页）' })
+  @ApiEnvelope(PostFeedResponseDto)
+  @ApiErrorEnvelope(400, 'cursor 参数非法', 'VALIDATION_ERROR')
+  feed(@Query() query: QueryPostDto) {
+    return this.posts.feed(query);
   }
 }

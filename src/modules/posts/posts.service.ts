@@ -9,6 +9,7 @@ import {
   POSTS_REPOSITORY,
   type PostsRepository,
 } from './repositories/posts.repository';
+import { decodeCursor } from './cursor';
 
 @Injectable()
 export class PostsService {
@@ -49,7 +50,30 @@ export class PostsService {
     return result;
   }
 
-
+  // 游标分页（GET /posts/feed）：解码游标 → 查 keyset → 回 nextCursor。
+  // ★ 不缓存：游标 token 的基数几乎是「无限」（每次翻页一个新 token），缓存命中率趋近 0，
+  //   还要处理失效——典型的「不该缓存」场景。见 README「哪些数据不该缓存」。
+  async feed(query: QueryPostDto) {
+    const cursor = query.cursor ? decodeCursor(query.cursor) : null;
+    // 传了 cursor 却解不出来 → 不是"第一页"，是非法输入，直接 400（别静默当第一页）
+    if (query.cursor && !cursor) {
+      throw new BusinessException(
+        ErrorCodes.VALIDATION_ERROR,
+        'cursor 参数非法',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    const { items, nextCursor } = await this.repo.findByCursor(query, cursor);
+    return {
+      items,
+      // 游标分页不返回 total / page：要么算不准、要么代价高，且客户端也用不上
+      pageInfo: {
+        nextCursor,
+        hasMore: nextCursor !== null,
+        limit: query.limit ?? 20,
+      },
+    };
+  }
 
 
 

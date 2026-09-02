@@ -1,13 +1,17 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/shared/database/prisma/prisma.service';
-import { Prisma } from '@prisma/client';
+import { 
+  Prisma,
+   type Post as PrismaPost,
+} from '@prisma/client';
 import type {
   Post,
   PostMeta,
   PostStatus,
 } from '../entities/post.entity';
 import type { QueryPostDto } from '../dto/query-post.dto';
-import type { PostsRepository } from './posts.repository';
+import type { PostsRepository, CursorResult } from './posts.repository';
+import { encodeCursor, type CursorPayload } from '../cursor';
 
 /**
  * Prisma 版仓储。它做且只做一件事：把 Prisma 的行翻译成领域实体（Post），
@@ -111,5 +115,65 @@ export class PrismaPostsRepository implements PostsRepository {
     ]);
 
     return { items: rows.map((r) => this.toDomain(r)), total };
+  }
+
+  // 从一行生成游标：排序字段值（日期→ISO，title→原文）+ id
+  private cursorOf(row: PrismaPost, sortBy: string): string {
+    const v =
+      sortBy === 'title'
+        ? row.title
+        : (row[sortBy as 'createdAt' | 'updatedAt'] as Date).toISOString();
+    return encodeCursor({ v, id: row.id.toString() });
+  }
+
+  async findByCursor(
+    query: QueryPostDto,
+    cursor: CursorPayload | null,
+  ): Promise<CursorResult> {
+    const limit = query.limit ?? 20;
+    const sortBy = query.sortBy ?? 'createdAt';
+    const order = query.order ?? 'desc';
+    // desc 想要"排在游标后面"= 比游标更小的行；asc 则是更大的行
+    const op = order === 'asc' ? 'gt' : 'lt';
+
+    const where = this.baseWhere(query);
+
+    if (cursor) {
+      // keyset：WHERE (sortBy, id) 在游标"之后"。复合比较 Prisma 没有直接算子，
+      // 拆成等价的两支 OR：  sortBy <op> v   OR   (sortBy = v AND id <op> cursorId)
+      // 计算键用 unknown 断言：动态 key 的字面量类型和 PostWhereInput 对不上，但语义正确。
+      const v = sortBy === 'title' ? cursor.v : new Date(cursor.v);
+      const keyset: Prisma.PostWhereInput = {
+        OR: [
+          { [sortBy]: { [op]: v } },
+          {
+            [sortBy]: v,
+            id: { [op]: cursor.id },
+          }
+        ],
+      };
+      // 和 keyword 的 OR 共存：放进 AND，避免两个顶层 OR 互相覆盖
+      where.AND = [...(Array.isArray(where.AND) ? where.AND : []), keyset];
+    }
+
+    // 多取一条：用来判断"还有没有下一页"，这一条不返回给客户端
+    const rows = await this.prisma.post.findMany({
+      where,
+      select: PrismaPostsRepository.postSelect,
+      orderBy: [
+        { [sortBy]: order } as Prisma.PostOrderByWithRelationInput,
+        { id: order }, // 次级键方向要和主键一致，keyset 才自洽
+      ],
+      take: limit + 1,
+    });
+
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    const nextCursor =
+      hasMore && page.length > 0
+        ? this.cursorOf(page[page.length - 1], sortBy)
+        : null;
+
+    return { items: page.map((r) => this.toDomain(r)), nextCursor };
   }
 }
