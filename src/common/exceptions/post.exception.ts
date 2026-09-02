@@ -6,6 +6,7 @@ export const PostExceptionCode = {
   SLUG_TAKEN: '13402',
   POST_ARCHIVED: '13403',
   INVALID_CURSOR: '13404',
+  POST_FORBIDDEN: '13405',
 } as const;
 
 export type PostExceptionCode =
@@ -31,5 +32,10 @@ export const PostExceptionMap: Record<PostExceptionCode, ExceptionInfo> = {
     message: 'cursor 参数非法',
     status: HttpStatus.BAD_REQUEST,
     code: PostExceptionCode.INVALID_CURSOR,
+  },
+  [PostExceptionCode.POST_FORBIDDEN]: {
+    message: '只有作者或管理员可以操作这篇文章',
+    status: HttpStatus.FORBIDDEN,
+    code: PostExceptionCode.POST_FORBIDDEN,
   },
 };

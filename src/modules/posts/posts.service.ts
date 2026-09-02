@@ -1,3 +1,4 @@
+import type { User } from '@prisma/client';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Post } from './entities/post.entity';
@@ -13,6 +14,7 @@ import {
   POSTS_REPOSITORY,
   type PostsRepository,
 } from './repositories/posts.repository';
+import { SpecialRolesEnum } from '@/common/decorators/special-roles.decorator';
 import { decodeCursor } from './cursor';
 import { TrendingService } from './trending.service';
 
@@ -22,6 +24,10 @@ export class PostsService {
   private static readonly LIST_PREFIX = 'posts:list:';
   // 单篇缓存的 key 前缀
   private static readonly POST_PREFIX = 'posts:post:id=';
+  /** 构造单篇缓存 key */
+  private static postKey(id: string): string {
+    return `${PostsService.POST_PREFIX}${id}`;
+  }
   /** 列表缓存的 SCAN MATCH pattern（不带 namespace），用于 CacheService.invalidatePattern 批量失效 */
   static readonly LIST_PATTERN = PostsService.LIST_PREFIX + '*';
   // Redis 掉线熔断：get/set 失败后进入冷却期，冷却期内请求直接 BYPASS 直连库，
@@ -192,27 +198,23 @@ export class PostsService {
     return { items: await this.repo.findTopByViewCount(limit) };
   }
 
-  // Day 33：资源级权限——admin 可改任意文章；其他人只能改自己写的；
-  // 无主文章（authorId 空，迁移前的老数据）只有 admin 能改。
-  private assertCanModify(post: Post, actor: Actor) {
-    if (actor.role === 'admin') return;
-    if (post.authorId && post.authorId === actor.sub) return;
-    throw new BusinessException(
-      ErrorCodes.FORBIDDEN,
-      '只有作者或管理员可以修改这篇文章',
-      HttpStatus.FORBIDDEN,
-    );
+  // 资源级权限——SuperAdmin 可改任意文章；其他人只能改自己写的；
+  // 无主文章（authorId 空，迁移前的老数据）只有 SuperAdmin 能改。
+  private assertCanModify(post: Post, user: User) {
+    if (user.specialRoles === SpecialRolesEnum.SuperAdmin) return;
+    if (post.authorId && post.authorId === user.id.toString()) return;
+    throw new ErrorException(ErrorExceptionCode.POST_FORBIDDEN);
   }
 
-  async remove(id: bigint, actor: Actor) {
+  async remove(id: bigint, user: User) {
     // 先查出来：404 优先于 403，且要拿到 authorId 做权限判断
     const post = await this.loadById(id.toString());
-    this.assertCanModify(post, actor);
+    this.assertCanModify(post, user);
     const ok = await this.repo.remove(id);
     if (!ok) {
       throw new ErrorException(ErrorExceptionCode.POST_NOT_FOUND);
     }
-    await this.invalidate(id);
+    await this.invalidate(id.toString());
     // 从排行榜摘掉，免得榜上挂着已删文章。
     await this.trendingService?.drop(id.toString());
     return { deleted: true, id };
@@ -237,7 +239,7 @@ export class PostsService {
     if (postId) await this.cache.del(PostsService.postKey(postId));
     // 一篇文章变了，所有页/排序/过滤的列表都可能受影响——按前缀全清。
     // ★ 这正是「列表缓存远不如单篇缓存划算」的根因：失效要 SCAN 扫描（单篇失效是 O(1) 的 del）。
-    await this.cache.delByPrefix(PostsService.LIST_PREFIX);
+    await this.cache.invalidatePattern(PostsService.LIST_PATTERN);
   }
 
   private isRedisCoolingDown(): boolean {

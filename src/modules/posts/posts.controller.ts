@@ -1,11 +1,12 @@
 import { Controller, Get, Query, Param, Post, Delete } from '@nestjs/common';
+import type { User } from '@prisma/client';
 import { ApiOperation, ApiExcludeEndpoint, ApiParam } from '@nestjs/swagger';
 import {
   ApiEnvelope,
   ApiErrorEnvelope,
   ApiExceptionEnvelope,
 } from '@/common/decorators/api-envelope.decorator';
-import { Public } from '@/common/decorators/jwt-auth.decorator';
+import { Public, UserInfo } from '@/common/decorators/jwt-auth.decorator';
 import { PostsService } from './posts.service';
 import {
   PostListResponseDto,
@@ -84,15 +85,15 @@ export class PostsController {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: '删除文章（需登录 + 作者本人或 admin）' })
+  @ApiOperation({ summary: '删除文章（需登录 + 作者本人或 SuperAdmin）' })
   @idParam
   @ApiEnvelope(DeletedResponseDto)
   @ApiErrorEnvelope(401, '未认证', 'UNAUTHORIZED')
-  @ApiErrorEnvelope(403, '不是作者也不是 admin', 'FORBIDDEN')
-  @ApiErrorEnvelope(404, '文章不存在', 'POST_NOT_FOUND')
+  @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.POST_FORBIDDEN)
+  @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.POST_NOT_FOUND)
   remove(
     @Param('id', ParseSnowflakePipe) id: bigint,
-    @CurrentUser() user: JwtPayload,
+    @UserInfo() user: User,
   ) {
     return this.posts.remove(id, user);
   }
