@@ -126,7 +126,7 @@ export class PostsService {
       return this.loadById(id);
     }
 
-    const key = `${PostsService.POST_PREFIX}${id}`;
+    const key = PostsService.postKey(id);
 
     let cached: string | undefined;
     try {
@@ -234,12 +234,17 @@ export class PostsService {
   }
 
   // 写后失效：删单篇（精确 key）+ 清列表（按前缀）。宁可多删不可少删——缓存多留一秒 = 用户多看一秒旧数据。
+  // ★ 失效失败不应拖垮已成功的 DB 写入：catch 后进入冷却期，下次写操作再重试。
   private async invalidate(postId?: string): Promise<void> {
-    if (!this.cache) return;
-    if (postId) await this.cache.del(PostsService.postKey(postId));
-    // 一篇文章变了，所有页/排序/过滤的列表都可能受影响——按前缀全清。
-    // ★ 这正是「列表缓存远不如单篇缓存划算」的根因：失效要 SCAN 扫描（单篇失效是 O(1) 的 del）。
-    await this.cache.invalidatePattern(PostsService.LIST_PATTERN);
+    try {
+      if (postId) await this.cache.del(PostsService.postKey(postId));
+      // 一篇文章变了，所有页/排序/过滤的列表都可能受影响——按前缀全清。
+      // ★ 这正是「列表缓存远不如单篇缓存划算」的根因：失效要 SCAN 扫描（单篇失效是 O(1) 的 del）。
+      await this.cache.invalidatePattern(PostsService.LIST_PATTERN);
+    } catch (err) {
+      this.enterRedisCoolDown(
+        `缓存失效失败${postId ? ` postId=${postId}` : ''}`, err);
+    }
   }
 
   private isRedisCoolingDown(): boolean {
