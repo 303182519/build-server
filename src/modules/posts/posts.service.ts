@@ -153,6 +153,22 @@ export class PostsService {
     return post;
   }
 
+  // 浏览计数 +1（原子）。不存在 → 404。
+  // ★ 这里故意【不】失效单篇缓存：浏览数是低价值、强写入（每次访问都 +1）的字段，
+  //   如果每次浏览都清缓存，findOne 的缓存基本就废了。我们接受 viewCount 在 TTL 内「最终一致」
+  //   （最多滞后 postTtl 秒）——对「显示用」的计数完全够。这是「能接受多旧的陈旧数据」的典型权衡。
+  async incrementView(id: string) {
+    const post = await this.repo.incrementViewCount(id);
+    if (!post) {
+      throw new ErrorException(ErrorExceptionCode.POST_NOT_FOUND);
+    }
+    // 浏览数 +1 的同时，给排行榜（ZSET）也加 1 分。两处分开记：
+    //   - view_count 落 DB（真相源，扛重启）
+    //   - ZSET 分数（热路径，读榜用）。两者最终一致（ZSET 丢了也能从 DB 重建）。
+    await this.trendingService?.bump(id);
+    return post;
+  }
+
   // 热门文章排行榜（GET /posts/trending）。
   // 先取 ZSET 的 Top N（快、不打 DB）；榜空 / Redis 不可用 → 回退到 DB 按 view_count 取（兜底）。
   async trending(limit: number): Promise<{ items: Post[] }> {

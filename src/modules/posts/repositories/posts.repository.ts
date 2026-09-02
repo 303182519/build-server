@@ -29,4 +29,7 @@ export interface PostsRepository {
 
   // 热门排行榜 DB 兆底：按浏览数降序取 Top N（仅 published）。
   findTopByViewCount(limit: number): Promise<Post[]>;
+
+  // 浏览计数原子自增（可交换操作，无需乐观锁 / 行锁）。返回 null = 记录不存在。
+  incrementViewCount(id: string): Promise<Post | null>;
 }

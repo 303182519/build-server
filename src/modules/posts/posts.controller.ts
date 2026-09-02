@@ -1,5 +1,5 @@
-import { Controller, Get, Query } from '@nestjs/common';
-import { ApiOperation, ApiExcludeEndpoint } from '@nestjs/swagger';
+import { Controller, Get, Query, Param, Post } from '@nestjs/common';
+import { ApiOperation, ApiExcludeEndpoint, ApiParam } from '@nestjs/swagger';
 import {
   ApiEnvelope,
   ApiErrorEnvelope,
@@ -10,12 +10,20 @@ import { PostsService } from './posts.service';
 import {
   PostListResponseDto,
   PostFeedResponseDto,
+  PostResponseDto,
 } from './dto/post-response.dto';
 import { QueryPostDto } from './dto/query-post.dto';
 import {
   PostExceptionCode,
   PostExceptionMap,
 } from '@/common/exceptions/post.exception';
+import { ParseSnowflakePipe } from '@/common/pipes/parse-snowflake.pipe';
+
+// 路径参数 :id 的统一文档
+const idParam = ApiParam({
+  name: 'id',
+  description: '文章 id',
+});
 
 @Controller('posts')
 export class PostsController {
@@ -61,5 +69,15 @@ export class PostsController {
   @ApiExcludeEndpoint() // 调试端点，不进对外文档
   boom() {
     return this.posts.triggerBoom();
+  }
+
+  // Day 29：浏览计数 +1（原子自增，无需锁）。公开——匿名访客也能贡献浏览数。
+  @Post(':id/view')
+  @ApiOperation({ summary: '浏览计数 +1（原子自增）' })
+  @idParam
+  @ApiEnvelope(PostResponseDto)
+  @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.POST_NOT_FOUND)
+  incrementView(@Param('id', ParseSnowflakePipe) id: bigint) {
+    return this.posts.incrementView(id);
   }
 }
