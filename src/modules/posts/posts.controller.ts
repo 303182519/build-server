@@ -1,5 +1,5 @@
 import { Controller, Get, Query } from '@nestjs/common';
-import { ApiOperation } from '@nestjs/swagger';
+import { ApiOperation, ApiExcludeEndpoint } from '@nestjs/swagger';
 import {
   ApiEnvelope,
   ApiErrorEnvelope,
@@ -53,5 +53,13 @@ export class PostsController {
     const limit =
       Number.isFinite(n) && n > 0 ? Math.min(Math.trunc(n), 50) : 10;
     return this.posts.trending(limit);
+  }
+
+  // 故意放在 :id 前面，避免 'debug' 被 ParseUUIDPipe 当成参数尝试解析
+  @Get('debug/boom')
+  @Public()
+  @ApiExcludeEndpoint() // 调试端点，不进对外文档
+  boom() {
+    return this.posts.triggerBoom();
   }
 }

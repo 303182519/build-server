@@ -20,6 +20,8 @@ import { TrendingService } from './trending.service';
 export class PostsService {
   // 列表缓存的 key 前缀：失效时按前缀 SCAN 清掉所有页/排序/过滤变体
   private static readonly LIST_PREFIX = 'posts:list:';
+  // 单篇缓存的 key 前缀
+  private static readonly POST_PREFIX = 'posts:post:id=';
   /** 列表缓存的 SCAN MATCH pattern（不带 namespace），用于 CacheService.invalidatePattern 批量失效 */
   static readonly LIST_PATTERN = PostsService.LIST_PREFIX + '*';
   // Redis 掉线熔断：get/set 失败后进入冷却期，冷却期内请求直接 BYPASS 直连库，
@@ -40,55 +42,6 @@ export class PostsService {
 
     @Optional() private readonly trendingService?: TrendingService,
   ) {}
-
-  // 单篇缓存的 key 前缀
-  private static readonly POST_PREFIX = 'posts:post:id=';
-
-  async findOne(id: string): Promise<Post> {
-    // Redis 未配置或处于掉线冷却期：绕过缓存直连库
-    if (!this.cache.isRedisEnabled() || this.isRedisCoolingDown()) {
-      setCacheState('BYPASS');
-      return this.loadPost(id);
-    }
-
-    const key = `${PostsService.POST_PREFIX}${id}`;
-
-    let cached: string | undefined;
-    try {
-      cached = await this.cache.get<string>(key);
-    } catch (err) {
-      this.enterRedisCoolDown(`读取单篇缓存失败 key=${key}`, err);
-      setCacheState('BYPASS');
-      return this.loadPost(id);
-    }
-
-    if (cached) {
-      setCacheState('HIT', key);
-      return this.revivePost(JSON.parse(cached) as Post);
-    }
-
-    const post = await this.loadPost(id);
-
-    try {
-      await this.cache.set(
-        key,
-        JSON.stringify(post),
-        this.jitteredTtl(this.listTtl),
-      );
-      setCacheState('MISS', key);
-    } catch (err) {
-      this.enterRedisCoolDown(`回填单篇缓存失败 key=${key}`, err);
-      setCacheState('BYPASS');
-    }
-
-    return post;
-  }
-
-  private async loadPost(id: string): Promise<Post> {
-    const post = await this.repo.findById(id);
-    if (!post) throw new ErrorException(ErrorExceptionCode.POST_NOT_FOUND);
-    return post;
-  }
 
   // ── 读路径：Cache-Aside（旁路缓存） ────────────────────────────────────
   // 思路就一句：「读的时候先问缓存，没有再问数据库，拿到后顺手回填缓存」。
@@ -160,6 +113,46 @@ export class PostsService {
     };
   }
 
+  async findOne(id: string): Promise<Post> {
+    // Redis 未配置或处于掉线冷却期：绕过缓存直连库
+    if (!this.cache.isRedisEnabled() || this.isRedisCoolingDown()) {
+      setCacheState('BYPASS');
+      return this.loadById(id);
+    }
+
+    const key = `${PostsService.POST_PREFIX}${id}`;
+
+    let cached: string | undefined;
+    try {
+      cached = await this.cache.get<string>(key);
+    } catch (err) {
+      this.enterRedisCoolDown(`读取单篇缓存失败 key=${key}`, err);
+      setCacheState('BYPASS');
+      return this.loadById(id);
+    }
+
+    if (cached) {
+      setCacheState('HIT', key);
+      return this.revivePost(JSON.parse(cached) as Post);
+    }
+
+    const post = await this.loadById(id);
+
+    try {
+      await this.cache.set(
+        key,
+        JSON.stringify(post),
+        this.jitteredTtl(this.listTtl),
+      );
+      setCacheState('MISS', key);
+    } catch (err) {
+      this.enterRedisCoolDown(`回填单篇缓存失败 key=${key}`, err);
+      setCacheState('BYPASS');
+    }
+
+    return post;
+  }
+
   // 热门文章排行榜（GET /posts/trending）。
   // 先取 ZSET 的 Top N（快、不打 DB）；榜空 / Redis 不可用 → 回退到 DB 按 view_count 取（兜底）。
   async trending(limit: number): Promise<{ items: Post[] }> {
@@ -181,6 +174,19 @@ export class PostsService {
     }
     // 兜底：直查 DB 按 view_count 取 Top N
     return { items: await this.repo.findTopByViewCount(limit) };
+  }
+
+  // 给 /posts/debug/boom 用：故意抛非 HttpException，验证全局兜底脱敏
+  triggerBoom(): never {
+    throw new Error('boom! 这条 message 不应该被客户端看到');
+  }
+
+  // ── Cache-Aside 的内部零件 ────────────────────────────────────────────
+
+  private async loadById(id: string): Promise<Post> {
+    const post = await this.repo.findById(id);
+    if (!post) throw new ErrorException(ErrorExceptionCode.POST_NOT_FOUND);
+    return post;
   }
 
   private isRedisCoolingDown(): boolean {
