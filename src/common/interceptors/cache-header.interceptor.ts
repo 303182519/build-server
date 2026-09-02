@@ -27,7 +27,7 @@ export class CacheHeaderInterceptor implements NestInterceptor {
         const { cache, cacheKey } = getRequestContext();
         if (cache) {
           res.setHeader('X-Cache', cache);
-          if (cacheKey) res.setHeader('X-Cache-Key', cacheKey);
+          // if (cacheKey) res.setHeader('X-Cache-Key', cacheKey);
         }
       }),
     );

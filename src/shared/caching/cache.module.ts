@@ -55,9 +55,11 @@ const buildRedisUrl = (redis: {
             ttl,
           };
         }
-
         const keyvRedis = new KeyvRedis(url, {
+          // 让 KeyvRedis 单独承担命名空间职责，避免与 Keyv 的 useKeyPrefix 形成双重前缀
           namespace: redis.keyPrefix,
+          // 用 ':' 替代默认 '::'：更短、与业务 key 风格一致、运维更易读
+          keyPrefixSeparator: ':',
           // 默认 true 会在连接失败时抛错；本期降级策略由 OnApplicationBootstrap 处理
           throwOnConnectError: false,
         });
@@ -81,7 +83,18 @@ const buildRedisUrl = (redis: {
         });
 
         return {
-          stores: [new Keyv({ store: keyvRedis, namespace: redis.keyPrefix })],
+          // Keyv 构造时会强制把 store.namespace 覆盖成自己的 namespace（默认 'keyv'），
+          // 所以必须显式传 namespace，否则 KeyvRedis 的 namespace 会被冲成 'keyv'
+          // useKeyPrefix: false —— 关闭 Keyv 的二次前缀化，前缀完全由 KeyvRedis 负责
+          // 这样落盘 key = `${namespace}${separator}${key}` = `my-first-nest:posts:list:xxx`
+          // 与 cache.service 的 formatKey(namespace+separator) 完全一致
+          stores: [
+            new Keyv({
+              store: keyvRedis,
+              namespace: redis.keyPrefix,
+              useKeyPrefix: false,
+            }),
+          ],
           ttl,
         };
       },

@@ -45,7 +45,7 @@ export const defaultConfig = registerAs('default', (): AppConfig => ({
     db: Number(process.env.REDIS_DB) || 0,
     // 缓存默认 TTL，单位：秒（0 表示不过期）
     defaultTtl: parseNumberEnv(process.env.REDIS_DEFAULT_TTL, 300),
-    keyPrefix: process.env.REDIS_KEY_PREFIX || 'my-first-nest:',
+    keyPrefix: process.env.REDIS_KEY_PREFIX || 'my-first-nest',
   },
   throttler: {
     // 默认时间窗口：60 秒（毫秒）
