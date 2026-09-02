@@ -32,4 +32,6 @@ export interface PostsRepository {
 
   // 浏览计数原子自增（可交换操作，无需乐观锁 / 行锁）。返回 null = 记录不存在。
   incrementViewCount(id: bigint): Promise<Post | null>;
+
+  remove(id: bigint): Promise<boolean>;
 }

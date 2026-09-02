@@ -215,4 +215,20 @@ export class PrismaPostsRepository implements PostsRepository {
     // 复用 findById 按 postSelect 拉全量并 toDomain，保证返回形状与其它出口一致。
     return this.findById(id);
   }
+
+  async remove(id: bigint): Promise<boolean> {
+    try {
+      await this.prisma.post.delete({ where: { id } });
+      return true;
+    } catch (e) {
+      // 删一条不存在的记录 → P2025 → 返回 false（和内存版 Map.delete 的语义对齐）
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2025'
+      ) {
+        return false;
+      }
+      throw e;
+    }
+  }
 }

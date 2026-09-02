@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Param, Post } from '@nestjs/common';
+import { Controller, Get, Query, Param, Post, Delete } from '@nestjs/common';
 import { ApiOperation, ApiExcludeEndpoint, ApiParam } from '@nestjs/swagger';
 import {
   ApiEnvelope,
@@ -11,6 +11,7 @@ import {
   PostListResponseDto,
   PostFeedResponseDto,
   PostResponseDto,
+  DeletedResponseDto,
 } from './dto/post-response.dto';
 import { QueryPostDto } from './dto/query-post.dto';
 import {
@@ -80,5 +81,19 @@ export class PostsController {
   @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.POST_NOT_FOUND)
   incrementView(@Param('id', ParseSnowflakePipe) id: bigint) {
     return this.posts.incrementView(id);
+  }
+
+  @Delete(':id')
+  @ApiOperation({ summary: '删除文章（需登录 + 作者本人或 admin）' })
+  @idParam
+  @ApiEnvelope(DeletedResponseDto)
+  @ApiErrorEnvelope(401, '未认证', 'UNAUTHORIZED')
+  @ApiErrorEnvelope(403, '不是作者也不是 admin', 'FORBIDDEN')
+  @ApiErrorEnvelope(404, '文章不存在', 'POST_NOT_FOUND')
+  remove(
+    @Param('id', ParseSnowflakePipe) id: bigint,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.posts.remove(id, user);
   }
 }

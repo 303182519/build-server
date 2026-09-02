@@ -192,6 +192,32 @@ export class PostsService {
     return { items: await this.repo.findTopByViewCount(limit) };
   }
 
+  // Day 33：资源级权限——admin 可改任意文章；其他人只能改自己写的；
+  // 无主文章（authorId 空，迁移前的老数据）只有 admin 能改。
+  private assertCanModify(post: Post, actor: Actor) {
+    if (actor.role === 'admin') return;
+    if (post.authorId && post.authorId === actor.sub) return;
+    throw new BusinessException(
+      ErrorCodes.FORBIDDEN,
+      '只有作者或管理员可以修改这篇文章',
+      HttpStatus.FORBIDDEN,
+    );
+  }
+
+  async remove(id: bigint, actor: Actor) {
+    // 先查出来：404 优先于 403，且要拿到 authorId 做权限判断
+    const post = await this.loadById(id.toString());
+    this.assertCanModify(post, actor);
+    const ok = await this.repo.remove(id);
+    if (!ok) {
+      throw new ErrorException(ErrorExceptionCode.POST_NOT_FOUND);
+    }
+    await this.invalidate(id);
+    // 从排行榜摘掉，免得榜上挂着已删文章。
+    await this.trendingService?.drop(id.toString());
+    return { deleted: true, id };
+  }
+
   // 给 /posts/debug/boom 用：故意抛非 HttpException，验证全局兜底脱敏
   triggerBoom(): never {
     throw new Error('boom! 这条 message 不应该被客户端看到');
@@ -203,6 +229,15 @@ export class PostsService {
     const post = await this.repo.findById(BigInt(id));
     if (!post) throw new ErrorException(ErrorExceptionCode.POST_NOT_FOUND);
     return post;
+  }
+
+  // 写后失效：删单篇（精确 key）+ 清列表（按前缀）。宁可多删不可少删——缓存多留一秒 = 用户多看一秒旧数据。
+  private async invalidate(postId?: string): Promise<void> {
+    if (!this.cache) return;
+    if (postId) await this.cache.del(PostsService.postKey(postId));
+    // 一篇文章变了，所有页/排序/过滤的列表都可能受影响——按前缀全清。
+    // ★ 这正是「列表缓存远不如单篇缓存划算」的根因：失效要 SCAN 扫描（单篇失效是 O(1) 的 del）。
+    await this.cache.delByPrefix(PostsService.LIST_PREFIX);
   }
 
   private isRedisCoolingDown(): boolean {

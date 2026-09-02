@@ -22,7 +22,6 @@ import {
   Param,
   Patch,
   Post,
-  UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam } from '@nestjs/swagger';
 import { CreateRoleDto } from './dto/create-role.dto';
