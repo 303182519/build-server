@@ -11,7 +11,13 @@ import type { AuthRequest } from '@/types/express';
  */
 @Injectable()
 export class AppThrottlerGuard extends ThrottlerGuard {
-  /** 限流 tracker 前缀：user:{userId} 或 ip:{ip}，最终会拼到 throttle:counter:{name}:{tracker} */
+  /**
+   * tracker 前缀：user:{userId} 或 ip:{ip}。
+   * 完整 key 组装链路（经过三层）：
+   *   1. 本 getTracker → "user:abc123" / "ip:1.2.3.4"
+   *   2. throttler.module 的 readableGenerateKey → "AuthController-login-default-user:abc123"
+   *   3. RedisThrottlerStorage.increment → "throttle:block:default:AuthController-login-default-user:abc123"
+   */
   private static readonly TRACKER_USER_PREFIX = 'user:';
   private static readonly TRACKER_IP_PREFIX = 'ip:';
 
