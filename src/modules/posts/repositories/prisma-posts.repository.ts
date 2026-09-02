@@ -129,20 +129,35 @@ export class PrismaPostsRepository implements PostsRepository {
     const where = this.baseWhere(query);
 
     if (cursor) {
-      // keyset：WHERE (sortBy, id) 在游标"之后"。复合比较 Prisma 没有直接算子，
-      // 拆成等价的两支 OR：  sortBy <op> v   OR   (sortBy = v AND id <op> cursorId)
-      // 计算键用 unknown 断言：动态 key 的字面量类型和 PostWhereInput 对不上，但语义正确。
+      // 游标分页（keyset pagination）的核心：把"排在游标之后的那些行"翻译成一个过滤条件，
+      // 再配合 orderBy + take 直接取下一页，替代 offset/skip 的分页方式。
+      // 游标存的是排序字段值（date→ISO 字符串，title→原文）+ id，见 cursorOf()。
+      //
+      // 具体例子：按 createdAt desc 排序，游标指向某一行
+      //   { createdAt: '2026-09-02T10:00:00Z', id: '100' }
+      // 则"排在它后面"的行只有两类，下面两个 OR 分支一一对应：
+      //   ① 更早的行：createdAt < 10:00
+      //   ② 同一时刻但 id 更小的行：createdAt = 10:00 且 id < 100
+      // 这正对应 orderBy [{ createdAt: 'desc' }, { id: 'desc' }] 的方向。
+      //
+      // 这里要把值还原成能被 Prisma 比较的类型：title 是字符串直接用，日期字段则还原成 Date。
       const v = sortBy === 'title' ? cursor.v : new Date(cursor.v);
-      const keyset: Prisma.PostWhereInput = {
+      const keyset = {
         OR: [
+          /* 
+            (created_at, id) < (X, Y)
+            ⟺  created_at < X                       -- 严格更小
+                OR (created_at = X AND id < Y)        -- 打平时看 id 
+          */
+          // 条件一：排序字段值严格"越过"游标（asc 取更大 gt，desc 取更小 lt）。
           { [sortBy]: { [op]: v } },
-          {
-            [sortBy]: v,
-            id: { [op]: cursor.id },
-          },
+          // 条件二：排序字段值刚好等于游标时，用 id 作为次级键继续比较。
+          // [sortBy]: v 是相等判断；这样排序字段有重复值时，靠 id 也能稳定翻页，不重不漏。
+          { [sortBy]: v, id: { [op]: cursor.id } },
         ],
       };
-      // 和 keyword 的 OR 共存：放进 AND，避免两个顶层 OR 互相覆盖
+      // baseWhere 里 keyword 已经用过顶层 OR，keyset 若再写顶层 OR 会互相覆盖；
+      // 所以把 keyset 放进 AND 分支，让"关键词过滤"和"游标定位"两个 OR 各自生效后再取交集。
       where.AND = [...(Array.isArray(where.AND) ? where.AND : []), keyset];
     }
 

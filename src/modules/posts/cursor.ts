@@ -27,7 +27,9 @@ export function encodeCursor(payload: CursorPayload): string {
 // 由调用方决定怎么处理（本项目在 Service 里转成 400）。解析用户输入永远要防御。
 export function decodeCursor(token: string): CursorPayload | null {
   try {
-    const obj = JSON.parse(Buffer.from(token, 'base64url').toString('utf8'));
+    const obj = JSON.parse(
+      Buffer.from(token, 'base64url').toString('utf8'),
+    ) as CursorPayload;
     if (obj && typeof obj.v === 'string' && typeof obj.id === 'string') {
       return { v: obj.v, id: obj.id };
     }
