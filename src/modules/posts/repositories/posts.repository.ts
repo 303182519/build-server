@@ -1,4 +1,4 @@
-import type { Post, PostWriteData } from '../entities/post.entity';
+import type { Post, PostWriteData, PostRevision } from '../entities/post.entity';
 import type { QueryPostDto } from '../dto/query-post.dto';
 import type { CursorPayload } from '../cursor';
 
@@ -36,6 +36,9 @@ export interface PostsRepository {
   incrementViewCount(id: bigint): Promise<Post | null>;
 
   remove(id: bigint): Promise<boolean>;
+
+  // Day 29 —— 列出某篇文章的修订历史（新 → 旧）。
+  listRevisions(postId: bigint): Promise<PostRevision[]>;
 
   // Day 29 —— 更新。expectedVersion 提供时做乐观锁检查（版本不匹配抛 VERSION_CONFLICT）；
   // 无论是否提供，成功更新都自增 version，并在同一事务里写一条修订快照。

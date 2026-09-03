@@ -22,6 +22,7 @@ import {
   PostFeedResponseDto,
   PostResponseDto,
   DeletedResponseDto,
+  PostRevisionResponseDto,
 } from './dto/post-response.dto';
 import { QueryPostDto } from './dto/query-post.dto';
 import { CreatePostDto } from './dto/create-post.dto';
@@ -93,6 +94,16 @@ export class PostsController {
   @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.POST_NOT_FOUND)
   findOne(@Param('id', ParseSnowflakePipe) id: bigint) {
     return this.posts.findOne(id.toString());
+  }
+
+  // 文章修订历史（新 → 旧）
+  @Get(':id/revisions')
+  @ApiOperation({ summary: '修订历史（新 → 旧）' })
+  @idParam
+  @ApiEnvelope(PostRevisionResponseDto, { isArray: true })
+  @ApiErrorEnvelope(404, '文章不存在', 'POST_NOT_FOUND')
+  revisions(@Param('id', ParseSnowflakePipe) id: bigint) {
+    return this.posts.listRevisions(id);
   }
 
   @Post()

@@ -1,11 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/shared/database/prisma/prisma.service';
-import { Prisma, type Post as PrismaPost } from '@prisma/client';
+import { Prisma, type Post as PrismaPost, type PostRevision as PrismaRevision, } from '@prisma/client';
 import type {
   Post,
   PostMeta,
   PostStatus,
   PostWriteData,
+  PostRevision,
 } from '../entities/post.entity';
 import type { QueryPostDto } from '../dto/query-post.dto';
 import type { PostsRepository, CursorResult } from './posts.repository';
@@ -67,6 +68,18 @@ export class PrismaPostsRepository implements PostsRepository {
       viewCount: row.viewCount,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
+    };
+  }
+
+  // DB 修订行 → 领域修订
+  private toRevision(row: PrismaRevision): PostRevision {
+    return {
+      id: row.id.toString(),
+      postId: row.postId.toString(),
+      version: row.version,
+      title: row.title,
+      content: row.content,
+      createdAt: row.createdAt,
     };
   }
 
@@ -331,6 +344,22 @@ export class PrismaPostsRepository implements PostsRepository {
       if (this.isSlugConflict(e)) throw this.slugTaken();
       throw e;
     }
+  }
+
+  async listRevisions(postId: bigint): Promise<PostRevision[]> {
+    const rows = await this.prisma.postRevision.findMany({
+      where: { postId },
+      orderBy: { version: 'desc' }, // 新 → 旧
+      select: {
+        id: true,
+        title: true,
+        content: true,
+        createdAt: true,
+        version: true,
+        postId: true,
+      }
+    });
+    return rows.map((r) => this.toRevision(r));
   }
 
   async findByCursor(

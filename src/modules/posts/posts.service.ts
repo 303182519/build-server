@@ -274,6 +274,12 @@ export class PostsService {
     return updated;
   }
 
+  // Day 29：修订历史。先确认文章存在（复用 loadById 的 404），再列修订。
+  async listRevisions(id: bigint) {
+    await this.loadById(id.toString());
+    return this.repo.listRevisions(id);
+  }
+
   // ── Cache-Aside 的内部零件 ────────────────────────────────────────────
 
   private async loadById(id: string): Promise<Post> {
