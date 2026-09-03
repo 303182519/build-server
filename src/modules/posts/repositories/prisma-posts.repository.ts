@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/shared/database/prisma/prisma.service';
-import { Prisma, type Post as PrismaPost, type PostRevision as PrismaRevision, } from '@prisma/client';
+import {
+  Prisma,
+  type Post as PrismaPost,
+  type PostRevision as PrismaRevision,
+} from '@prisma/client';
 import type {
   Post,
   PostMeta,
@@ -357,7 +361,7 @@ export class PrismaPostsRepository implements PostsRepository {
         createdAt: true,
         version: true,
         postId: true,
-      }
+      },
     });
     return rows.map((r) => this.toRevision(r));
   }
