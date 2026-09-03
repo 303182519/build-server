@@ -1,10 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/shared/database/prisma/prisma.service';
 import { Prisma, type Post as PrismaPost } from '@prisma/client';
-import type { Post, PostMeta, PostStatus } from '../entities/post.entity';
+import type {
+  Post,
+  PostMeta,
+  PostStatus,
+  PostWriteData,
+} from '../entities/post.entity';
 import type { QueryPostDto } from '../dto/query-post.dto';
 import type { PostsRepository, CursorResult } from './posts.repository';
 import { encodeCursor, type CursorPayload } from '../cursor';
+import {
+  ErrorException,
+  ErrorExceptionCode,
+} from '@/common/exceptions/error.exception';
 
 /**
  * Prisma 版仓储。它做且只做一件事：把 Prisma 的行翻译成领域实体（Post），
@@ -114,6 +123,60 @@ export class PrismaPostsRepository implements PostsRepository {
         ? row.title
         : row[sortBy as 'createdAt' | 'updatedAt'].toISOString();
     return encodeCursor({ v, id: row.id.toString() });
+  }
+
+  // 只把 **slug** 的唯一约束冲突（P2002 且 target 命中 slug）翻译成 409 SLUG_TAKEN。
+  // 不能见 P2002 就当 slug——posts 上还有别的唯一约束（如 post_revisions 的
+  // (post_id, version)），那类冲突若也报 "slug 已被占用" 就是误导。靠 e.meta.target 区分。
+  private isSlugConflict(e: unknown): boolean {
+    if (
+      !(e instanceof Prisma.PrismaClientKnownRequestError) ||
+      e.code !== 'P2002'
+    ) {
+      return false;
+    }
+    // P2002 的 meta.target 是冲突字段名数组（或约束名），slug 冲突里一定含 'slug'
+    const target = (e.meta as { target?: unknown } | undefined)?.target;
+    return JSON.stringify(target ?? '').includes('slug');
+  }
+
+  private slugTaken() {
+    return new ErrorException(ErrorExceptionCode.SLUG_TAKEN);
+  }
+
+  async findBySlug(slug: string): Promise<Post | null> {
+    const row = await this.prisma.post.findUnique({
+      where: { slug },
+      select: PrismaPostsRepository.postSelect,
+    });
+    return row ? this.toDomain(row) : null;
+  }
+
+  async create(data: PostWriteData): Promise<Post> {
+    try {
+      const row = await this.prisma.post.create({
+        data: {
+          title: data.title,
+          slug: data.slug,
+          content: data.content,
+          // tags 在领域类型里就是必填 string[]，Service 已统一兜底成 []，这里不再 ?? []
+          tags: data.tags,
+          status: data.status,
+          // Day 33：作者。Service 给登录用户的创建会带上 authorId；没传就落 NULL（无主）
+          authorId: data.authorId ? BigInt(data.authorId) : null,
+          // meta 没传就不写这个键，让它落 DB NULL；传了才作为 JSON 写入。
+          // PostMeta 是具名 interface，没有索引签名，要先经 unknown 再断言成 JSON 输入类型
+          ...(data.meta !== undefined
+            ? { meta: data.meta as unknown as Prisma.InputJsonValue }
+            : {}),
+        },
+      });
+      return this.toDomain(row);
+    } catch (e) {
+      // 正常路径 Service 已 findBySlug 预检；这里兜"预检到写入之间被并发插队"的竞态
+      if (this.isSlugConflict(e)) throw this.slugTaken();
+      throw e;
+    }
   }
 
   async findByCursor(

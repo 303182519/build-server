@@ -17,6 +17,7 @@ import {
 import { SpecialRolesEnum } from '@/common/decorators/special-roles.decorator';
 import { decodeCursor } from './cursor';
 import { TrendingService } from './trending.service';
+import { CreatePostDto } from './dto/create-post.dto';
 
 @Injectable()
 export class PostsService {
@@ -223,6 +224,24 @@ export class PostsService {
   // 给 /posts/debug/boom 用：故意抛非 HttpException，验证全局兜底脱敏
   triggerBoom(): never {
     throw new Error('boom! 这条 message 不应该被客户端看到');
+  }
+
+  async create(dto: CreatePostDto, authorId: string) {
+    if (await this.repo.findBySlug(dto.slug)) {
+      throw new ErrorException(ErrorExceptionCode.SLUG_TAKEN);
+    }
+    const created = await this.repo.create({
+      title: dto.title,
+      slug: dto.slug,
+      content: dto.content,
+      tags: dto.tags ?? [],
+      status: dto.status,
+      meta: dto.meta,
+      authorId, // 作者 = 当前登录用户
+    });
+    // 新文章会出现在列表里（分页、首页都可能变）→ 失效所有列表缓存。单篇 key 还不存在，无需 del。
+    await this.invalidate();
+    return created;
   }
 
   // ── Cache-Aside 的内部零件 ────────────────────────────────────────────

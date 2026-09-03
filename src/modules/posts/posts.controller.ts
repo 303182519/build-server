@@ -1,4 +1,12 @@
-import { Controller, Get, Query, Param, Post, Delete } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Query,
+  Param,
+  Post,
+  Delete,
+  Body,
+} from '@nestjs/common';
 import type { User } from '@prisma/client';
 import { ApiOperation, ApiExcludeEndpoint, ApiParam } from '@nestjs/swagger';
 import {
@@ -15,6 +23,8 @@ import {
   DeletedResponseDto,
 } from './dto/post-response.dto';
 import { QueryPostDto } from './dto/query-post.dto';
+import { CreatePostDto } from './dto/create-post.dto';
+
 import {
   PostExceptionCode,
   PostExceptionMap,
@@ -65,7 +75,7 @@ export class PostsController {
     return this.posts.trending(limit);
   }
 
-  // 故意放在 :id 前面，避免 'debug' 被 ParseUUIDPipe 当成参数尝试解析
+  // 故意放在 :id 前面，避免 'debug' 被当成参数尝试解析
   @Get('debug/boom')
   @Public()
   @ApiExcludeEndpoint() // 调试端点，不进对外文档
@@ -73,7 +83,7 @@ export class PostsController {
     return this.posts.triggerBoom();
   }
 
-  // ParseUUIDPipe 校验路径参数格式，非法 UUID 直接 400，不会进 Service
+  // 校验路径参数格式 不会进 Service
   @Get(':id')
   @ApiOperation({ summary: '按 id 查单篇' })
   @idParam
@@ -83,7 +93,15 @@ export class PostsController {
     return this.posts.findOne(id.toString());
   }
 
-  // Day 29：浏览计数 +1（原子自增，无需锁）。公开——匿名访客也能贡献浏览数。
+  @Post()
+  @ApiOperation({ summary: '创建文章（需登录，作者=当前用户）' })
+  @ApiEnvelope(PostResponseDto)
+  @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.SLUG_TAKEN)
+  create(@Body() dto: CreatePostDto, @UserInfo() user: User) {
+    return this.posts.create(dto, user.id.toString());
+  }
+
+  // 浏览计数 +1（原子自增，无需锁）。公开——匿名访客也能贡献浏览数。
   @Post(':id/view')
   @Public()
   @ApiOperation({ summary: '浏览计数 +1（原子自增）' })
