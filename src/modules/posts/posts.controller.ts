@@ -116,14 +116,17 @@ export class PostsController {
 
   @Patch(':id')
   @ApiOperation({
-    summary: '局部更新（需登录 + 作者本人或 admin）',
+    summary: '局部更新（需登录 + 作者本人或 SuperAdmin）',
     description:
       '带 `version` 即做乐观锁；不带则 last-write-wins。每次成功更新自增 version 并留一条修订。',
   })
   @idParam
   @ApiEnvelope(PostResponseDto)
+  @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.POST_NOT_FOUND)
   @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.POST_FORBIDDEN)
+  @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.POST_ARCHIVED)
   @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.SLUG_TAKEN)
+  @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.VERSION_CONFLICT)
   update(
     @Param('id', ParseSnowflakePipe) id: bigint,
     @Body() dto: UpdatePostDto,

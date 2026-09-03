@@ -158,6 +158,11 @@ export class PrismaPostsRepository implements PostsRepository {
     return new ErrorException(ErrorExceptionCode.SLUG_TAKEN);
   }
 
+  // 乐观锁版本冲突（409）：期望版本与当前不一致时抛出（回滚事务）
+  private versionConflict() {
+    return new ErrorException(ErrorExceptionCode.VERSION_CONFLICT);
+  }
+
   async create(data: PostWriteData): Promise<Post> {
     // 并发新建同名标签时，connectOrCreate 可能 P2002（tags.name 唯一约束）。重试一次即可：
     // 此时标签已被并发请求创建，重试的 connectOrCreate 会命中 connect 分支，不再 create。
@@ -224,42 +229,89 @@ export class PrismaPostsRepository implements PostsRepository {
     if (patch.title !== undefined) data.title = patch.title;
     if (patch.slug !== undefined) data.slug = patch.slug;
     if (patch.content !== undefined) data.content = patch.content;
-    if (patch.tags !== undefined) data.tags = patch.tags;
     if (patch.status !== undefined) data.status = patch.status;
     if (patch.meta !== undefined)
       data.meta = patch.meta as unknown as Prisma.InputJsonValue;
+    // tags 在 Post 上没有标量列（多对多，走 post_tags 关联），不能直接赋值。
+    // 替换语义：先清空旧关联，再 connectOrCreate 新标签（写法对齐 createOnce）。
+    if (patch.tags !== undefined) {
+      data.postTags = {
+        deleteMany: {},
+        create: patch.tags.map((name) => ({
+          tag: {
+            connectOrCreate: {
+              where: { name },
+              create: { id: BigInt(generateSnowflakeId()), name },
+            },
+          },
+        })),
+      };
+    }
 
-    // ★ 把"改 post + 写修订"放进一个交互式事务：要么都成、要么都不成（原子性）。
-    //   版本冲突时在事务里 throw → 整个事务回滚，修订也不会留下半条。
+    // 并发新建同名标签时 connectOrCreate 可能 P2002（tags.name 唯一约束），
+    // 同 create：重试一次即命中 connect 分支。
+    try {
+      return await this.updateOnce(id, data, expectedVersion);
+    } catch (e) {
+      if (this.isTagNameConflict(e))
+        return this.updateOnce(id, data, expectedVersion);
+      throw e;
+    }
+  }
+
+  // update 的事务体：改 post + 写修订快照，放进同一个交互式事务——
+  // 要么都成、要么都不成（原子性）；版本冲突时在事务里 throw → 整个事务回滚，修订也不留半条。
+  private async updateOnce(
+    id: bigint,
+    data: Prisma.PostUpdateInput,
+    expectedVersion?: number,
+  ): Promise<Post | null> {
     try {
       return await this.prisma.$transaction(async (tx) => {
-        let row: PrismaPost;
+        // 两分支统一用 postSelect 出口形状（含 postTags 关联），和 toDomain 入参一致
+        let row: Prisma.PostGetPayload<{
+          select: typeof PrismaPostsRepository.postSelect;
+        }>;
         if (expectedVersion !== undefined) {
-          // 乐观锁：WHERE id AND version = expected。命中 0 行 = 版本变了 或 记录没了。
-          const res = await tx.post.updateMany({
-            where: { id, version: expectedVersion },
-            data,
-          });
-          if (res.count === 0) {
-            // 区分"被并发删除"和"版本冲突"：再查一次
-            const exists = await tx.post.findUnique({
-              where: { id },
-              select: { id: true },
+          // 乐观锁：WHERE id AND version = expected（扩展 where：唯一键 + 额外过滤条件）。
+          // ★ 必须用 update 而不是 updateMany：updateMany 的 data 不支持 postTags 嵌套写入，
+          //   且 update 直接返回更新后的行，省一次回查。命中 0 行抛 P2025，在这区分两种原因。
+          try {
+            row = await tx.post.update({
+              where: { id, version: expectedVersion },
+              data,
+              select: PrismaPostsRepository.postSelect,
             });
-            if (!exists) return null; // 记录没了 → 交给 Service 当 NOT_FOUND
-            throw this.versionConflict(); // 版本不匹配 → 409（抛出回滚事务）
+          } catch (e) {
+            if (
+              e instanceof Prisma.PrismaClientKnownRequestError &&
+              e.code === 'P2025' // 要操作的记录找不到
+            ) {
+              // 区分"被并发删除"和"版本冲突"：再查一次
+              const exists = await tx.post.findUnique({
+                where: { id },
+                select: { id: true },
+              });
+              if (!exists) return null; // 记录没了 → 交给 Service 当 NOT_FOUND
+              throw this.versionConflict(); // 版本不匹配 → 409（抛出回滚事务）
+            }
+            throw e;
           }
-          // updateMany 只返回 count，拿不到行，要再查一次
-          row = await tx.post.findUniqueOrThrow({ where: { id } });
         } else {
           // 不带版本：last-write-wins（最后写入者赢），但仍自增 version。
-          // update 直接返回更新后的行，无需再查（比乐观锁分支省一次 SELECT）。
-          row = await tx.post.update({ where: { id }, data });
+          // 记录不存在 → P2025 穿到下面的外层 catch 转 null。
+          row = await tx.post.update({
+            where: { id },
+            data,
+            select: PrismaPostsRepository.postSelect,
+          });
         }
 
         // 同一事务里快照一条修订
         await tx.postRevision.create({
           data: {
+            // id 是 BigInt @id 且无 @default（雪花 ID 代码层生成，对齐 posts 主表惯例）
+            id: BigInt(generateSnowflakeId()),
             postId: row.id,
             version: row.version,
             title: row.title,

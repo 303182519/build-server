@@ -7,6 +7,7 @@ export const PostExceptionCode = {
   POST_ARCHIVED: '13403',
   INVALID_CURSOR: '13404',
   POST_FORBIDDEN: '13405',
+  VERSION_CONFLICT: '13406',
 } as const;
 
 export type PostExceptionCode =
@@ -37,5 +38,10 @@ export const PostExceptionMap: Record<PostExceptionCode, ExceptionInfo> = {
     message: '只有作者或管理员可以操作这篇文章',
     status: HttpStatus.FORBIDDEN,
     code: PostExceptionCode.POST_FORBIDDEN,
+  },
+  [PostExceptionCode.VERSION_CONFLICT]: {
+    message: '文章已被并发修改（version 不一致），请刷新后重试',
+    status: HttpStatus.CONFLICT,
+    code: PostExceptionCode.VERSION_CONFLICT,
   },
 };

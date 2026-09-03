@@ -248,30 +248,29 @@ export class PostsService {
   }
 
   async update(id: bigint, dto: UpdatePostDto, user: User) {
-    const post = await this.loadById(id); // 复用 NOT_FOUND 分支（404 优先于 403）
+    const post = await this.loadById(id.toString()); // 复用 NOT_FOUND 分支（404 优先于 403）
     this.assertCanModify(post, user);
     if (post.status === 'archived') {
       throw new ErrorException(ErrorExceptionCode.POST_ARCHIVED);
     }
-    if (dto.slug && dto.slug !== post.slug) {
-      const exists = await this.repo.findBySlug(dto.slug);
-      if (exists) {
-        throw new ErrorException(ErrorExceptionCode.SLUG_TAKEN);
-      }
-    }
+    // slug 冲突不做 findBySlug 预检（TOCTOU，理由同 create）：唯一约束兜底，
+    // P2002 由仓储层捕获转 SLUG_TAKEN。
     // version 是乐观锁的"期望版本"，不是要写入的内容字段，先摘出来
     const { version, ...rest } = dto;
     // 只保留显式提供的字段，避免把 undefined 写回去覆盖原值
     const patch = Object.fromEntries(
       Object.entries(rest).filter(([, v]) => v !== undefined),
     );
+    // 标签去重：重复标签会触发 post_tags 复合主键冲突，且无业务意义（与 create 的处理对齐）
+    // （fromEntries 丢失了键信息，tags 键的值在 DTO 里只可能是 string[]，断言安全）
+    if (patch.tags) patch.tags = [...new Set(patch.tags as string[])];
     const updated = await this.repo.update(id, patch, version);
     if (!updated) {
-      // 极少出现：update 之前刚 findOne 通过，理论上不会到这；防御性兜底
-      throw new NotFoundException(`Post #${id} not found`);
+      // 极少出现：update 之前刚 loadById 通过，理论上不会到这；防御性兜底
+      throw new ErrorException(ErrorExceptionCode.POST_NOT_FOUND);
     }
     // 改了内容/标题/排序相关字段 → 单篇和列表都可能脏。先失效，再返回（写后失效，见 README）。
-    await this.invalidate(id);
+    await this.invalidate(id.toString());
     return updated;
   }
 
