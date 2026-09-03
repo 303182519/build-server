@@ -214,6 +214,73 @@ export class PrismaPostsRepository implements PostsRepository {
     }
   }
 
+  async update(
+    id: bigint,
+    patch: Partial<PostWriteData>,
+    expectedVersion?: number,
+  ): Promise<Post | null> {
+    // Service 已把 undefined 过滤掉，这里只搬运确实存在的键；version 每次更新都自增。
+    const data: Prisma.PostUpdateInput = { version: { increment: 1 } };
+    if (patch.title !== undefined) data.title = patch.title;
+    if (patch.slug !== undefined) data.slug = patch.slug;
+    if (patch.content !== undefined) data.content = patch.content;
+    if (patch.tags !== undefined) data.tags = patch.tags;
+    if (patch.status !== undefined) data.status = patch.status;
+    if (patch.meta !== undefined)
+      data.meta = patch.meta as unknown as Prisma.InputJsonValue;
+
+    // ★ 把"改 post + 写修订"放进一个交互式事务：要么都成、要么都不成（原子性）。
+    //   版本冲突时在事务里 throw → 整个事务回滚，修订也不会留下半条。
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        let row: PrismaPost;
+        if (expectedVersion !== undefined) {
+          // 乐观锁：WHERE id AND version = expected。命中 0 行 = 版本变了 或 记录没了。
+          const res = await tx.post.updateMany({
+            where: { id, version: expectedVersion },
+            data,
+          });
+          if (res.count === 0) {
+            // 区分"被并发删除"和"版本冲突"：再查一次
+            const exists = await tx.post.findUnique({
+              where: { id },
+              select: { id: true },
+            });
+            if (!exists) return null; // 记录没了 → 交给 Service 当 NOT_FOUND
+            throw this.versionConflict(); // 版本不匹配 → 409（抛出回滚事务）
+          }
+          // updateMany 只返回 count，拿不到行，要再查一次
+          row = await tx.post.findUniqueOrThrow({ where: { id } });
+        } else {
+          // 不带版本：last-write-wins（最后写入者赢），但仍自增 version。
+          // update 直接返回更新后的行，无需再查（比乐观锁分支省一次 SELECT）。
+          row = await tx.post.update({ where: { id }, data });
+        }
+
+        // 同一事务里快照一条修订
+        await tx.postRevision.create({
+          data: {
+            postId: row.id,
+            version: row.version,
+            title: row.title,
+            content: row.content,
+          },
+        });
+        return this.toDomain(row);
+      });
+    } catch (e) {
+      // P2025（不带版本、记录不存在）→ null；P2002（改 slug 撞名竞态）→ 409 SLUG_TAKEN
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2025'
+      ) {
+        return null;
+      }
+      if (this.isSlugConflict(e)) throw this.slugTaken();
+      throw e;
+    }
+  }
+
   async findByCursor(
     query: QueryPostDto,
     cursor: CursorPayload | null,

@@ -36,4 +36,13 @@ export interface PostsRepository {
   incrementViewCount(id: bigint): Promise<Post | null>;
 
   remove(id: bigint): Promise<boolean>;
+
+  // Day 29 —— 更新。expectedVersion 提供时做乐观锁检查（版本不匹配抛 VERSION_CONFLICT）；
+  // 无论是否提供，成功更新都自增 version，并在同一事务里写一条修订快照。
+  // 返回 null = 记录不存在。
+  update(
+    id: bigint,
+    patch: Partial<PostWriteData>,
+    expectedVersion?: number,
+  ): Promise<Post | null>;
 }

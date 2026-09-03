@@ -18,6 +18,7 @@ import { SpecialRolesEnum } from '@/common/decorators/special-roles.decorator';
 import { decodeCursor } from './cursor';
 import { TrendingService } from './trending.service';
 import { CreatePostDto } from './dto/create-post.dto';
+import { UpdatePostDto } from './dto/update-post.dto';
 
 @Injectable()
 export class PostsService {
@@ -244,6 +245,34 @@ export class PostsService {
     // 新文章会出现在列表里（分页、首页都可能变）→ 失效所有列表缓存。单篇 key 还不存在，无需 del。
     await this.invalidate();
     return created;
+  }
+
+  async update(id: bigint, dto: UpdatePostDto, user: User) {
+    const post = await this.loadById(id); // 复用 NOT_FOUND 分支（404 优先于 403）
+    this.assertCanModify(post, user);
+    if (post.status === 'archived') {
+      throw new ErrorException(ErrorExceptionCode.POST_ARCHIVED);
+    }
+    if (dto.slug && dto.slug !== post.slug) {
+      const exists = await this.repo.findBySlug(dto.slug);
+      if (exists) {
+        throw new ErrorException(ErrorExceptionCode.SLUG_TAKEN);
+      }
+    }
+    // version 是乐观锁的"期望版本"，不是要写入的内容字段，先摘出来
+    const { version, ...rest } = dto;
+    // 只保留显式提供的字段，避免把 undefined 写回去覆盖原值
+    const patch = Object.fromEntries(
+      Object.entries(rest).filter(([, v]) => v !== undefined),
+    );
+    const updated = await this.repo.update(id, patch, version);
+    if (!updated) {
+      // 极少出现：update 之前刚 findOne 通过，理论上不会到这；防御性兜底
+      throw new NotFoundException(`Post #${id} not found`);
+    }
+    // 改了内容/标题/排序相关字段 → 单篇和列表都可能脏。先失效，再返回（写后失效，见 README）。
+    await this.invalidate(id);
+    return updated;
   }
 
   // ── Cache-Aside 的内部零件 ────────────────────────────────────────────

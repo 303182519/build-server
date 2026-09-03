@@ -6,6 +6,7 @@ import {
   Post,
   Delete,
   Body,
+  Patch,
 } from '@nestjs/common';
 import type { User } from '@prisma/client';
 import { ApiOperation, ApiExcludeEndpoint, ApiParam } from '@nestjs/swagger';
@@ -24,6 +25,7 @@ import {
 } from './dto/post-response.dto';
 import { QueryPostDto } from './dto/query-post.dto';
 import { CreatePostDto } from './dto/create-post.dto';
+import { UpdatePostDto } from './dto/update-post.dto';
 
 import {
   PostExceptionCode,
@@ -110,6 +112,24 @@ export class PostsController {
   @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.POST_NOT_FOUND)
   incrementView(@Param('id', ParseSnowflakePipe) id: bigint) {
     return this.posts.incrementView(id);
+  }
+
+  @Patch(':id')
+  @ApiOperation({
+    summary: '局部更新（需登录 + 作者本人或 admin）',
+    description:
+      '带 `version` 即做乐观锁；不带则 last-write-wins。每次成功更新自增 version 并留一条修订。',
+  })
+  @idParam
+  @ApiEnvelope(PostResponseDto)
+  @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.POST_FORBIDDEN)
+  @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.SLUG_TAKEN)
+  update(
+    @Param('id', ParseSnowflakePipe) id: bigint,
+    @Body() dto: UpdatePostDto,
+    @UserInfo() user: User,
+  ) {
+    return this.posts.update(id, dto, user);
   }
 
   @Delete(':id')
