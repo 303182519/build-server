@@ -25,9 +25,13 @@ export class AppThrottlerGuard extends ThrottlerGuard {
     const userId = this.getUserId(req);
 
     if (userId) {
-      return Promise.resolve(`${AppThrottlerGuard.TRACKER_USER_PREFIX}${userId}`);
+      return Promise.resolve(
+        `${AppThrottlerGuard.TRACKER_USER_PREFIX}${userId}`,
+      );
     }
-    return Promise.resolve(`${AppThrottlerGuard.TRACKER_IP_PREFIX}${req.ips[0] || req.ip}`);
+    return Promise.resolve(
+      `${AppThrottlerGuard.TRACKER_IP_PREFIX}${req.ips[0] || req.ip}`,
+    );
   }
 
   private getUserId(req: AuthRequest): string | undefined {
