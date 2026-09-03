@@ -227,14 +227,16 @@ export class PostsService {
   }
 
   async create(dto: CreatePostDto, authorId: string) {
-    if (await this.repo.findBySlug(dto.slug)) {
-      throw new ErrorException(ErrorExceptionCode.SLUG_TAKEN);
-    }
+    // 标签去重：重复标签会触发 post_tags 复合主键冲突，且无业务意义。
+    // 与 RolesService.create 对 permissionCodes 的去重惯例对齐。
+    const tags = [...new Set(dto.tags ?? [])];
+    // 不做 findBySlug 预检：预检存在 TOCTOU（查的时候没有、写的时候被并发插队），
+    // slug 唯一约束才是唯一可靠的防重保障，冲突由仓储层捕获 P2002 转 SLUG_TAKEN。
     const created = await this.repo.create({
       title: dto.title,
       slug: dto.slug,
       content: dto.content,
-      tags: dto.tags ?? [],
+      tags,
       status: dto.status,
       meta: dto.meta,
       authorId, // 作者 = 当前登录用户

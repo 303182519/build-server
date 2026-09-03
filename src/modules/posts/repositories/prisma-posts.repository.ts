@@ -14,6 +14,7 @@ import {
   ErrorException,
   ErrorExceptionCode,
 } from '@/common/exceptions/error.exception';
+import { generateSnowflakeId } from '@/shared/utils/snowflake';
 
 /**
  * Prisma 版仓储。它做且只做一件事：把 Prisma 的行翻译成领域实体（Post），
@@ -140,40 +141,74 @@ export class PrismaPostsRepository implements PostsRepository {
     return JSON.stringify(target ?? '').includes('slug');
   }
 
+  // 标签名唯一冲突（P2002 且 target 命中 name）：仅在并发新建同名标签时出现，
+  // 用于 create 里的一次性重试——重试时标签已存在，connectOrCreate 走 connect 分支。
+  private isTagNameConflict(e: unknown): boolean {
+    if (
+      !(e instanceof Prisma.PrismaClientKnownRequestError) ||
+      e.code !== 'P2002'
+    ) {
+      return false;
+    }
+    const target = (e.meta as { target?: unknown } | undefined)?.target;
+    return JSON.stringify(target ?? '').includes('name');
+  }
+
   private slugTaken() {
     return new ErrorException(ErrorExceptionCode.SLUG_TAKEN);
   }
 
-  async findBySlug(slug: string): Promise<Post | null> {
-    const row = await this.prisma.post.findUnique({
-      where: { slug },
-      select: PrismaPostsRepository.postSelect,
-    });
-    return row ? this.toDomain(row) : null;
+  async create(data: PostWriteData): Promise<Post> {
+    // 并发新建同名标签时，connectOrCreate 可能 P2002（tags.name 唯一约束）。重试一次即可：
+    // 此时标签已被并发请求创建，重试的 connectOrCreate 会命中 connect 分支，不再 create。
+    try {
+      return await this.createOnce(data);
+    } catch (e) {
+      if (this.isTagNameConflict(e)) return this.createOnce(data);
+      throw e;
+    }
   }
 
-  async create(data: PostWriteData): Promise<Post> {
+  private async createOnce(data: PostWriteData): Promise<Post> {
     try {
       const row = await this.prisma.post.create({
         data: {
+          // id 是 BigInt @id 且无 @default(autoincrement())，必须代码层生成雪花 ID。
+          id: BigInt(generateSnowflakeId()),
           title: data.title,
           slug: data.slug,
           content: data.content,
-          // tags 在领域类型里就是必填 string[]，Service 已统一兜底成 []，这里不再 ?? []
-          tags: data.tags,
           status: data.status,
-          // Day 33：作者。Service 给登录用户的创建会带上 authorId；没传就落 NULL（无主）
+          // 作者。Service 给登录用户的创建会带上 authorId；没传就落 NULL（无主）。
           authorId: data.authorId ? BigInt(data.authorId) : null,
+          // tags 是多对多（post_tags ↔ tags），Post 上没有标量 tags 列，必须走 postTags 关联写入。
+          // connectOrCreate：按 name 连接已存在标签，否则新建（name 唯一）。Service 已去重。
+          ...(data.tags.length > 0
+            ? {
+                postTags: {
+                  create: data.tags.map((name) => ({
+                    tag: {
+                      connectOrCreate: {
+                        where: { name },
+                        create: { id: BigInt(generateSnowflakeId()), name },
+                      },
+                    },
+                  })),
+                },
+              }
+            : {}),
           // meta 没传就不写这个键，让它落 DB NULL；传了才作为 JSON 写入。
           // PostMeta 是具名 interface，没有索引签名，要先经 unknown 再断言成 JSON 输入类型
           ...(data.meta !== undefined
             ? { meta: data.meta as unknown as Prisma.InputJsonValue }
             : {}),
         },
+        // 和读取侧一致，用 postSelect 返回拍平后的领域实体（tags 由 postTags 拍平）。
+        select: PrismaPostsRepository.postSelect,
       });
       return this.toDomain(row);
     } catch (e) {
-      // 正常路径 Service 已 findBySlug 预检；这里兜"预检到写入之间被并发插队"的竞态
+      // slug 唯一约束是唯一可靠的防重保障（预检查存在 TOCTOU）。靠 P2002 转业务错误。
       if (this.isSlugConflict(e)) throw this.slugTaken();
       throw e;
     }
