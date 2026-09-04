@@ -9,6 +9,7 @@ import { ThrottlerConfigModule } from './shared/throttler/throttler.module';
 import { StaticModule } from './shared/static/static.module';
 import { CommonModule } from './common/common.module';
 // import { PostsModule } from './modules/posts/posts.module';
+import { JobsModule } from './shared/jobs/jobs.module';
 
 import { modules } from './modules';
 @Module({
@@ -17,6 +18,7 @@ import { modules } from './modules';
     CommonModule,
     PrismaModule,
     RedisCacheModule,
+    JobsModule,
     ThrottlerConfigModule,
     StaticModule,
     ...modules,
