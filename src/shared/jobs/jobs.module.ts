@@ -4,7 +4,8 @@ import { JobQueueService } from './queue/job-queue.service';
 import { JobProcessor } from './queue/job.processor';
 import { JobRecordService } from './records/job-record.service';
 import { JobRegistryService } from './registry/job-registry.service';
-import { JobService } from './jobs.service';
+import { JobService } from './services/job.service';
+import { JobEventsService } from './events/job-events.service';
 
 /**
  * 任务系统统一入口模块。
@@ -21,6 +22,7 @@ import { JobService } from './jobs.service';
   imports: [JobQueueModule],
   providers: [
     JobRegistryService,
+    JobEventsService,
     JobRecordService,
     JobQueueService,
     JobService,
@@ -28,8 +30,8 @@ import { JobService } from './jobs.service';
   ],
   exports: [
     JobRegistryService,
+    JobEventsService,
     JobRecordService,
-    JobQueueService,
     JobService,
     JobQueueModule,
   ],
