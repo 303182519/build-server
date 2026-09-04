@@ -7,6 +7,8 @@ import {
   PermissionExceptionMap,
 } from './permission.exception';
 import { RoleExceptionCode, RoleExceptionMap } from './role.exception';
+import { JobExceptionCode, JobExceptionMap } from './job.exception';
+
 /**
  * 错误码
  * 命名规则：MMSNN 模块代码 + 状态码类别 + 序列号
@@ -18,6 +20,7 @@ export const ErrorExceptionCode = {
   ...PostExceptionCode,
   ...PermissionExceptionCode,
   ...RoleExceptionCode,
+  ...JobExceptionCode,
 } as const;
 
 export type ErrorExceptionCode =
@@ -29,6 +32,7 @@ export const ErrorExceptionMap: Record<ErrorExceptionCode, ExceptionInfo> = {
   ...PostExceptionMap,
   ...PermissionExceptionMap,
   ...RoleExceptionMap,
+  ...JobExceptionMap,
 };
 
 export class ErrorException extends BaseException {
