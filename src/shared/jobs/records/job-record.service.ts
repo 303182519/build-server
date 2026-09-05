@@ -74,6 +74,10 @@ export class JobRecordService {
     return this.toDomain(row);
   }
 
+  
+  async attachBullJobId(jobId: string, bullJobId: string): Promise<void> {
+    await this.prisma.jobRun.update({ where: { id: BigInt(jobId) }, data: { bullJobId } });
+  }
   /**
    * 标记单次尝试失败。
    *
@@ -148,6 +152,11 @@ export class JobRecordService {
       throw new ErrorException(ErrorExceptionCode.JOB_NOT_FOUND);
     }
     return run;
+  }
+
+
+  async getViewOrFail(jobId: string): Promise<IJobRunView> {
+    return this.toDomain(await this.getEntityOrFail(jobId));
   }
 
   /**
