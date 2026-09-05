@@ -52,6 +52,7 @@ export interface IJobRunView {
   attemptsMade: number;
   maxAttempts: number;
   triggerType: JobTriggerType;
+  createdBy?: string | null;
   startedAt?: Date | null;
   finishedAt?: Date | null;
   createdAt: Date;

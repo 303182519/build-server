@@ -52,6 +52,7 @@ export class JobRecordService {
       maxAttempts: row.maxAttempts,
       // status/triggerType 的合法值由写入路径的常量枚举保证，这里直接断言收窄回领域类型。
       triggerType: row.triggerType as JobTriggerType,
+      createdBy: row.createdBy ? row.createdBy.toString() : null,
       startedAt: row.startedAt,
       finishedAt: row.finishedAt,
       createdAt: row.createdAt,
