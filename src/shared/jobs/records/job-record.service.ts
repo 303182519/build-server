@@ -128,25 +128,25 @@ export class JobRecordService {
    * 返回 null 表示当前已不可取消（例如已被 worker 取走）。
    */
   async markCancelledIfCancellable(jobId: string): Promise<PrismaJobRun | null> {
-    const result = await this.jobRunRepository
-      .createQueryBuilder()
-      .update(JobRun)
-      .set({
+    // 条件更新：仅当仍处于 queued/delayed 时才写入 cancelled 终态，
+    // 并发下若已被 worker 抢走（active）或已达其他终态，count 为 0，不产生覆盖。
+    const result = await this.prisma.jobRun.updateMany({
+      where: {
+        id: BigInt(jobId),
+        status: { in: [JOB_STATUS.QUEUED, JOB_STATUS.DELAYED] },
+      },
+      data: {
         status: JOB_STATUS.CANCELLED,
         finishedAt: new Date(),
-      })
-      .where('id = :jobId', { jobId })
-      .andWhere('status IN (:...statuses)', {
-        statuses: [JOB_STATUS.QUEUED, JOB_STATUS.DELAYED],
-      })
-      .execute();
+      },
+    });
 
-    if (!result.affected) {
+    if (!result.count) {
       return null;
     }
 
     const cancelled = await this.getEntityOrFail(jobId);
-    this.publishJobEventSafe(cancelled.id);
+    await this.publishJobEventSafe(jobId);
     return cancelled;
   }
 
