@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import {
   ErrorException,
   ErrorExceptionCode,
@@ -26,6 +26,8 @@ const MAX_ERROR_MESSAGE_LENGTH = 2000;
  */
 @Injectable()
 export class JobRecordService {
+  private readonly logger = new Logger(JobRecordService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jobEvents: JobEventsService,
@@ -72,6 +74,13 @@ export class JobRecordService {
     return this.toDomain(row);
   }
 
+  /**
+   * 标记单次尝试失败。
+   *
+   * 使用条件更新（WHERE status = active）防止并发场景下覆盖终态：
+   * - 若任务已被 cancel/complete，条件不匹配，update 静默跳过，不会错误回退状态。
+   * - isFinal=true 时推进至 failed 终态；否则回退至 queued 等待下次重试。
+   */
   async markAttemptFailure(
     jobId: string,
     attemptsMade: number,
@@ -79,9 +88,14 @@ export class JobRecordService {
     isFinal: boolean,
   ): Promise<void> {
     const errorMessage = this.stringifyError(error);
+
     if (isFinal) {
-      await this.prisma.jobRun.update({
-        where: { id: BigInt(jobId) },
+      await this.prisma.jobRun.updateMany({
+        where: {
+          id: BigInt(jobId),
+          // 仅当任务仍处于 active 状态时才推进终态，避免覆盖 cancel/complete。
+          status: JOB_STATUS.ACTIVE,
+        },
         data: {
           status: JOB_STATUS.FAILED,
           attemptsMade,
@@ -89,19 +103,23 @@ export class JobRecordService {
           finishedAt: new Date(),
         },
       });
-      await this.publishJobEvent(jobId);
+      await this.publishJobEventSafe(jobId);
       return;
     }
 
-    await this.prisma.jobRun.update({
-      where: { id: BigInt(jobId) },
+    // 非终态失败：回退至 queued 等待 BullMQ 重试。
+    await this.prisma.jobRun.updateMany({
+      where: {
+        id: BigInt(jobId),
+        status: JOB_STATUS.ACTIVE,
+      },
       data: {
         status: JOB_STATUS.QUEUED,
         attemptsMade,
         errorMessage,
       },
     });
-    await this.publishJobEvent(jobId);
+    await this.publishJobEventSafe(jobId);
   }
 
   private stringifyError(error: unknown): string {
@@ -122,7 +140,7 @@ export class JobRecordService {
     return message;
   }
 
-  async getEntityOrFail(jobId: string): Promise<JobRun> {
+  async getEntityOrFail(jobId: string): Promise<PrismaJobRun> {
     const run = await this.prisma.jobRun.findUnique({
       where: { id: BigInt(jobId) },
     });
@@ -132,16 +150,29 @@ export class JobRecordService {
     return run;
   }
 
-  private async publishJobEvent(jobId: string): Promise<void> {
-    const run = await this.getEntityOrFail(jobId);
-    this.publishJobRunEvent(run);
-  }
+  /**
+   * 安全发布 SSE 事件：读取当前记录状态并推送。
+   *
+   * - 事件发布属于「尽力而为」的副作用，不应阻断主流程。
+   * - 若记录已被软删除（findUnique 返回 null）则静默跳过。
+   * - 任何异常仅记录日志，不向上抛出。
+   */
+  private async publishJobEventSafe(jobId: string): Promise<void> {
+    try {
+      const run = await this.prisma.jobRun.findUnique({
+        where: { id: BigInt(jobId) },
+      });
+      if (!run) return;
 
-  private publishJobRunEvent(run: JobRun): void {
-    const view = this.toView(run);
-    this.jobEvents.publish({
-      event: resolveJobSseEventName(view.status),
-      data: view,
-    });
+      const view = this.toDomain(run);
+      this.jobEvents.publish({
+        event: resolveJobSseEventName(view.status),
+        data: view,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to publish SSE event for job ${jobId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 }
