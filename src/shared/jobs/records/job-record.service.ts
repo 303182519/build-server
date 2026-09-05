@@ -78,31 +78,37 @@ export class JobRecordService {
   /**
    * 仅当任务仍可执行（queued/delayed）时激活。
    * 返回 false 表示取消或其他终态已抢先，worker 应跳过执行。
+   *
+   * startedAt 使用条件赋值：仅在首次激活时写入（null → now()），
+   * 重试场景下保留原始 startedAt 不被覆盖。
    */
   async markActive(
     jobId: string,
     bullJobId?: string,
     attemptsMade?: number,
   ): Promise<boolean> {
-    const result = await this.jobRunRepository
-      .createQueryBuilder()
-      .update(JobRun)
-      .set({
-        status: JOB_STATUS.ACTIVE,
-        bullJobId: bullJobId ?? undefined,
-        attemptsMade:
-          typeof attemptsMade === 'number' ? attemptsMade : undefined,
-        startedAt: () => 'COALESCE(started_at, NOW())',
-      })
-      .where('id = :jobId', { jobId })
-      .andWhere('status IN (:...statuses)', {
-        statuses: [JOB_STATUS.QUEUED, JOB_STATUS.DELAYED],
-      })
-      .execute();
+    const existing = await this.prisma.jobRun.findUnique({
+      where: { id: BigInt(jobId) },
+      select: { startedAt: true },
+    });
 
-    const affected = Boolean(result.affected);
+    const result = await this.prisma.jobRun.updateMany({
+      where: {
+        id: BigInt(jobId),
+        status: { in: [JOB_STATUS.QUEUED, JOB_STATUS.DELAYED] },
+      },
+      data: {
+        status: JOB_STATUS.ACTIVE,
+        ...(bullJobId != null ? { bullJobId } : {}),
+        ...(typeof attemptsMade === 'number' ? { attemptsMade } : {}),
+        // COALESCE(started_at, NOW()) 等价：仅首次激活时写入，重试保留原值。
+        ...(!existing?.startedAt ? { startedAt: new Date() } : {}),
+      },
+    });
+
+    const affected = result.count > 0;
     if (affected) {
-      await this.publishJobEvent(jobId);
+      await this.publishJobEventSafe(jobId);
     }
 
     return affected;
@@ -110,19 +116,19 @@ export class JobRecordService {
 
   async updateProgress(jobId: string, progress: number): Promise<void> {
     const normalized = Math.max(0, Math.min(100, Math.round(progress)));
-    const result = await this.jobRunRepository
-      .createQueryBuilder()
-      .update(JobRun)
-      .set({
+    const result = await this.prisma.jobRun.updateMany({
+      where: {
+        id: BigInt(jobId),
+        status: JOB_STATUS.ACTIVE,
+      },
+      data: {
         progress: normalized,
         status: JOB_STATUS.ACTIVE,
-      })
-      .where('id = :jobId', { jobId })
-      .andWhere('status = :status', { status: JOB_STATUS.ACTIVE })
-      .execute();
+      },
+    });
 
-    if (result.affected) {
-      await this.publishJobEvent(jobId);
+    if (result.count > 0) {
+      await this.publishJobEventSafe(jobId);
     }
   }
 
@@ -131,15 +137,19 @@ export class JobRecordService {
     result: unknown,
     attemptsMade?: number,
   ): Promise<void> {
-    const run = await this.getEntityOrFail(jobId);
-    run.status = JOB_STATUS.COMPLETED;
-    run.progress = 100;
-    run.result = (result as object | undefined) ?? null;
-    run.errorMessage = null;
-    if (typeof attemptsMade === 'number') run.attemptsMade = attemptsMade;
-    run.finishedAt = new Date();
-    await this.jobRunRepository.save(run);
-    this.publishJobRunEvent(run);
+    await this.prisma.jobRun.update({
+      where: { id: BigInt(jobId) },
+      data: {
+        status: JOB_STATUS.COMPLETED,
+        progress: 100,
+        result: (result as Prisma.InputJsonValue) ?? Prisma.DbNull,
+        errorMessage: null,
+        ...(typeof attemptsMade === 'number' ? { attemptsMade } : {}),
+        finishedAt: new Date(),
+      },
+    });
+    // 事件发布为「尽力而为」的副作用，不阻塞主流程。
+    this.publishJobEventSafe(jobId);
   }
   
   async attachBullJobId(jobId: string, bullJobId: string): Promise<void> {

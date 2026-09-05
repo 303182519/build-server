@@ -216,3 +216,43 @@ model PostTag {
   @@id([postId, tagId])
   @@map("post_tags")
 }
+
+// ----------------------------------------------------------------------------
+// JobRun —— 任务执行记录（job_runs）
+// ----------------------------------------------------------------------------
+// 任务中心（前端）与 Bull Board 的分界：job_runs 存业务任务生命周期
+// （name/payload/result/errorMessage/triggerType），供业务侧查询与 SSE 推送；
+// BullMQ 队列内部状态（waiting/active/...）由 Bull Board 观察，二者数据源不同。
+// 触发者不建外键：任务记录是审计数据，应独立于用户生命周期（用户删除不影响历史任务）。
+model JobRun {
+  id        BigInt    @id // 雪花ID，代码层生成
+  createdAt DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt DateTime? @map("deleted_at") @db.DateTime(3) // 软删除：null=未删除，有值=删除时间
+
+  name        String  @db.VarChar(128) // 任务名（JOB_NAMES）
+  queueName   String  @default("default") @map("queue_name") @db.VarChar(64)
+  bullJobId   String? @map("bull_job_id") @db.VarChar(128) // BullMQ 内部 job id
+  triggerType String  @default("manual") @map("trigger_type") @db.VarChar(32)
+  status      String  @default("queued") @db.VarChar(32)
+
+  progress     Int     @default(0)
+  payload      Json?   @db.Json // 任务参数
+  result       Json?   @db.Json // 任务结果
+  errorMessage String? @map("error_message") @db.Text
+
+  attemptsMade Int  @default(0) @map("attempts_made")
+  maxAttempts  Int  @default(1) @map("max_attempts")
+
+  startedAt  DateTime? @map("started_at") @db.DateTime(3) // 首次开始执行时间
+  finishedAt DateTime? @map("finished_at") @db.DateTime(3) // 终态（completed/failed/cancelled）时间
+
+  createdBy BigInt? @map("created_by") // 触发者用户ID
+
+  @@index([status, createdAt])
+  @@index([name, createdAt])
+  @@index([bullJobId])
+  @@index([deletedAt])
+
+  @@map("job_runs")
+}
