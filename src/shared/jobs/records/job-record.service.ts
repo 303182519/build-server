@@ -34,7 +34,7 @@ export class JobRecordService {
   ) {}
 
   // ── 映射：DB 行 → 领域实体 ──────────────────────────────────────────
-  private toDomain(row: PrismaJobRun): IJobRunView {
+  toDomain(row: PrismaJobRun): IJobRunView {
     return {
       id: row.id.toString(),
       name: row.name,
@@ -97,8 +97,6 @@ export class JobRecordService {
       await this.prisma.jobRun.updateMany({
         where: {
           id: BigInt(jobId),
-          // 仅当任务仍处于 active 状态时才推进终态，避免覆盖 cancel/complete。
-          status: JOB_STATUS.ACTIVE,
         },
         data: {
           status: JOB_STATUS.FAILED,
@@ -115,7 +113,6 @@ export class JobRecordService {
     await this.prisma.jobRun.updateMany({
       where: {
         id: BigInt(jobId),
-        status: JOB_STATUS.ACTIVE,
       },
       data: {
         status: JOB_STATUS.QUEUED,
@@ -124,6 +121,33 @@ export class JobRecordService {
       },
     });
     await this.publishJobEventSafe(jobId);
+  }
+
+  /**
+   * 仅当任务仍处于可取消状态时落库为 cancelled。
+   * 返回 null 表示当前已不可取消（例如已被 worker 取走）。
+   */
+  async markCancelledIfCancellable(jobId: string): Promise<PrismaJobRun | null> {
+    const result = await this.jobRunRepository
+      .createQueryBuilder()
+      .update(JobRun)
+      .set({
+        status: JOB_STATUS.CANCELLED,
+        finishedAt: new Date(),
+      })
+      .where('id = :jobId', { jobId })
+      .andWhere('status IN (:...statuses)', {
+        statuses: [JOB_STATUS.QUEUED, JOB_STATUS.DELAYED],
+      })
+      .execute();
+
+    if (!result.affected) {
+      return null;
+    }
+
+    const cancelled = await this.getEntityOrFail(jobId);
+    this.publishJobEventSafe(cancelled.id);
+    return cancelled;
   }
 
   private stringifyError(error: unknown): string {
