@@ -78,6 +78,13 @@ const buildBullPrefix = (keyPrefix?: string) =>
     }),
     BullModule.registerQueue({
       name: DEFAULT_JOB_QUEUE,
+      defaultJobOptions: {
+        // 自动清理已完成 / 已失败的 Job 数据，防止 Redis 无限膨胀。
+        // 项目已用 MySQL（job_runs 表）作为权威持久化存储，Redis 仅保留最近 1000 条
+        // 供 BullMQ 运行时查询和短期运维排查，历史数据以 MySQL 为准。
+        removeOnComplete: { count: 1000 },
+        removeOnFail: { count: 1000 },
+      },
     }),
   ],
   exports: [BullModule],
