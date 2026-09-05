@@ -30,6 +30,16 @@ export class JobService {
     private readonly registry: JobRegistryService,
   ) {}
 
+  /**
+   * 提交异步任务。
+   *
+   * 编排流程：「注册表校验 → 落库记录 → 入队 BullMQ → 回写 bullJobId」。
+   *
+   * 失败语义：
+   * - 注册表未命中：直接抛 JOB_HANDLER_NOT_FOUND，不产生 DB 记录。
+   * - 落库成功但入队失败：DB 记录推进至 failed 终态（附带错误信息），再向上抛出原始异常。
+   * - bullJobId 回写失败：非致命，仅记录 warn 日志，不影响任务执行。
+   */
   async submit(input: ISubmitJobInput): Promise<IJobRunView> {
     if (!this.registry.has(input.name)) {
       throw new ErrorException(ErrorExceptionCode.JOB_HANDLER_NOT_FOUND);
@@ -88,5 +98,33 @@ export class JobService {
     return this.records.getViewOrFail(run.id);
 
   }
+  /**
+   * 根据 jobId 获取任务详情。
+   */
+  getById(jobId: string): Promise<IJobRunView> {
+    return this.records.getViewOrFail(jobId);
+  }
 
+  async cancel(jobId: string): Promise<IJobRunView> {
+    const run = await this.records.getEntityOrFail(jobId);
+
+    if (run.bullJobId) {
+      try {
+        await this.queue.remove(run.bullJobId);
+      } catch (error) {
+        this.logger.warn(
+          `Failed to remove bullJobId=${run.bullJobId} during cancel: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
+    const cancelled = await this.records.markCancelledIfCancellable(jobId);
+    if (!cancelled) {
+      throw new ErrorException(ErrorExceptionCode.JOB_NOT_CANCELLABLE);
+    }
+
+    return this.records.toDomain(cancelled);
+  } 
 }

@@ -6,6 +6,7 @@ import { JobRecordService } from './records/job-record.service';
 import { JobRegistryService } from './registry/job-registry.service';
 import { JobService } from './services/job.service';
 import { JobEventsService } from './events/job-events.service';
+import { JobsController } from './jobs.controller';
 
 /**
  * 任务系统统一入口模块。
@@ -20,6 +21,7 @@ import { JobEventsService } from './events/job-events.service';
 @Global()
 @Module({
   imports: [JobQueueModule],
+  controllers: [JobsController],
   providers: [
     JobRegistryService,
     JobEventsService,
