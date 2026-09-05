@@ -13,7 +13,11 @@ import {
   type JobStatus,
   type JobTriggerType,
 } from '../constants/job.constants';
-import { type IJobRunView, type IJobRunCreateData, type IListJobsQuery } from '../types/job.types';
+import {
+  type IJobRunView,
+  type IJobRunCreateData,
+  type IListJobsQuery,
+} from '../types/job.types';
 
 const MAX_ERROR_MESSAGE_LENGTH = 2000;
 
@@ -73,7 +77,6 @@ export class JobRecordService {
     });
     return this.toDomain(row);
   }
-
 
   /**
    * 仅当任务仍可执行（queued/delayed）时激活。
@@ -151,9 +154,12 @@ export class JobRecordService {
     // 事件发布为「尽力而为」的副作用，不阻塞主流程。
     this.publishJobEventSafe(jobId);
   }
-  
+
   async attachBullJobId(jobId: string, bullJobId: string): Promise<void> {
-    await this.prisma.jobRun.update({ where: { id: BigInt(jobId) }, data: { bullJobId } });
+    await this.prisma.jobRun.update({
+      where: { id: BigInt(jobId) },
+      data: { bullJobId },
+    });
   }
   /**
    * 标记单次尝试失败。
@@ -204,7 +210,9 @@ export class JobRecordService {
    * 仅当任务仍处于可取消状态时落库为 cancelled。
    * 返回 null 表示当前已不可取消（例如已被 worker 取走）。
    */
-  async markCancelledIfCancellable(jobId: string): Promise<PrismaJobRun | null> {
+  async markCancelledIfCancellable(
+    jobId: string,
+  ): Promise<PrismaJobRun | null> {
     // 条件更新：仅当仍处于 queued/delayed 时才写入 cancelled 终态，
     // 并发下若已被 worker 抢走（active）或已达其他终态，count 为 0，不产生覆盖。
     const result = await this.prisma.jobRun.updateMany({
@@ -254,7 +262,6 @@ export class JobRecordService {
     }
     return run;
   }
-
 
   async getViewOrFail(jobId: string): Promise<IJobRunView> {
     return this.toDomain(await this.getEntityOrFail(jobId));

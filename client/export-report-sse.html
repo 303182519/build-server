@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>异步导出 + SSE 进度监听示例</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 24px;
+            color: #24292f;
+        }
+        section {
+            border: 1px solid #d0d7de;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 20px;
+        }
+        h1 { font-size: 22px; }
+        h2 { font-size: 16px; margin-top: 0; }
+        .tip { color: #57606a; font-size: 13px; }
+        label { display: inline-block; width: 130px; font-size: 13px; }
+        input {
+            padding: 4px 8px;
+            margin: 4px 0;
+            border: 1px solid #d0d7de;
+            border-radius: 4px;
+        }
+        button {
+            padding: 6px 16px;
+            border: none;
+            border-radius: 4px;
+            background: #0969da;
+            color: #fff;
+            cursor: pointer;
+        }
+        button:disabled { background: #8c959f; cursor: not-allowed; }
+        .badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 10px;
+            font-size: 12px;
+            color: #fff;
+            background: #8c959f;
+        }
+        .badge.active { background: #0969da; }
+        .badge.completed { background: #1a7f37; }
+        .badge.failed, .badge.cancelled { background: #cf222e; }
+        .progress-track {
+            height: 14px;
+            border-radius: 7px;
+            background: #eff2f5;
+            overflow: hidden;
+            margin: 8px 0;
+        }
+        .progress-bar {
+            height: 100%;
+            width: 0;
+            background: #0969da;
+            transition: width 0.2s;
+        }
+        #sse-log {
+            max-height: 300px;
+            overflow-y: auto;
+            background: #f6f8fa;
+            border-radius: 6px;
+            padding: 10px;
+            font-size: 13px;
+            font-family: ui-monospace, Consolas, monospace;
+        }
+        .log-line {
+            padding: 2px 0;
+            border-bottom: 1px dashed #d0d7de;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .kv { font-size: 13px; margin: 4px 0; }
+        .result {
+            background: #dafbe1;
+            border-radius: 4px;
+            padding: 8px;
+            font-size: 13px;
+            margin-top: 8px;
+            word-break: break-all;
+            white-space: pre-wrap;
+        }
+        .error {
+            background: #ffebe9;
+            border-radius: 4px;
+            padding: 8px;
+            font-size: 13px;
+            margin-top: 8px;
+            word-break: break-all;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <h1>异步导出 + SSE 进度监听示例</h1>
+    <p class="tip">
+        流程：登录拿 accessToken → POST /api/background-tasks/export-report 提交任务拿 jobId
+        → 监听 GET /api/jobs/:id/events 实时接收进度。
+        因 SSE 接口需要 Authorization 请求头（原生 EventSource 不支持自定义 header），
+        本示例改用 fetch + ReadableStream 手动解析事件流，详见 js/export-report-sse.js。
+    </p>
+
+    <section>
+        <h2>1. 登录</h2>
+        <div><label>email</label><input id="email" placeholder="user@example.com"></div>
+        <div><label>password</label><input id="password" type="password"></div>
+        <button id="login-btn">登录</button>
+        <span id="auth-state" class="tip">未登录</span>
+    </section>
+
+    <section>
+        <h2>2. 提交导出任务</h2>
+        <div><label>title</label><input id="title" value="monthly-report"></div>
+        <div><label>steps（1-20）</label><input id="steps" type="number" min="1" max="20" value="5"></div>
+        <div><label>stepDelayMs（0-5000）</label><input id="step-delay-ms" type="number" min="0" max="5000" step="100" value="500"></div>
+        <div><label>delayMs（0-60000）</label><input id="delay-ms" type="number" min="0" max="60000" step="100" value="0"></div>
+        <button id="export-btn">提交并监听</button>
+        <span id="export-hint" class="tip"></span>
+    </section>
+
+    <section>
+        <h2>3. 订阅已有任务（可选）</h2>
+        <div>
+            <label>jobId</label>
+            <input id="job-id-input" placeholder="粘贴 jobId，页面刷新后可凭它恢复监听" size="40">
+        </div>
+        <button id="subscribe-btn">订阅</button>
+        <span id="subscribe-hint" class="tip"></span>
+        <p class="tip">
+            SSE 连接建立后服务端会先下发 job.snapshot 补发当前状态，
+            所以任意时刻重连（包括任务已完成）都能恢复现场。
+        </p>
+    </section>
+
+    <section>
+        <h2>任务状态</h2>
+        <div class="kv">jobId：<span id="job-id">-</span></div>
+        <div class="kv">
+            状态：<span id="job-status">-</span>
+            进度：<span id="job-progress-text">0%</span>
+        </div>
+        <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+        <div id="job-result"></div>
+    </section>
+
+    <section>
+        <h2>SSE 事件流</h2>
+        <div id="sse-log"></div>
+    </section>
+
+    <script src="./js/export-report-sse.js"></script>
+</body>
+</html>
