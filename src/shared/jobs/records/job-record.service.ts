@@ -4,7 +4,7 @@ import {
   ErrorExceptionCode,
 } from '@/common/exceptions/error.exception';
 import { PrismaService } from '@/shared/database/prisma/prisma.service';
-import { JobRun as PrismaJobRun } from '@prisma/client';
+import { JobRun as PrismaJobRun, Prisma } from '@prisma/client';
 import { generateSnowflakeId } from '@/shared/utils/snowflake';
 import { JobEventsService } from '../events/job-events.service';
 import { resolveJobSseEventName } from '../events/job-sse.util';
@@ -13,7 +13,7 @@ import {
   type JobStatus,
   type JobTriggerType,
 } from '../constants/job.constants';
-import { type IJobRunView, type IJobRunCreateData } from '../types/job.types';
+import { type IJobRunView, type IJobRunCreateData, type IListJobsQuery } from '../types/job.types';
 
 const MAX_ERROR_MESSAGE_LENGTH = 2000;
 
@@ -181,6 +181,40 @@ export class JobRecordService {
 
   async getViewOrFail(jobId: string): Promise<IJobRunView> {
     return this.toDomain(await this.getEntityOrFail(jobId));
+  }
+
+  async list(query: IListJobsQuery): Promise<{
+    list: IJobRunView[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }> {
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 20;
+
+    const where: Prisma.JobRunWhereInput = {};
+    if (query.name) where.name = query.name;
+    if (query.status) where.status = query.status;
+
+    // $transaction 数组形式：findMany 与 count 同一事务快照，保证 total 与当页数据口径一致。
+    const [list, total] = await this.prisma.$transaction([
+      this.prisma.jobRun.findMany({
+        where,
+        // 追加 id 作稳定次级排序键：createdAt 毫秒精度下同值时避免分页漂移 / 漏行 / 重复行；
+        // 雪花 ID 单调递增，desc 与 createdAt 降序方向一致。
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.jobRun.count({ where }),
+    ]);
+
+    return {
+      list: list.map((item) => this.toDomain(item)),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   /**

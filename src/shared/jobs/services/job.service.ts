@@ -11,7 +11,7 @@ import {
   JOB_STATUS,
   JOB_TRIGGER_TYPE,
 } from '../constants/job.constants';
-import { type ISubmitJobInput, type IJobRunView } from '../types/job.types';
+import { type ISubmitJobInput, type IJobRunView, type IListJobsQuery } from '../types/job.types';
 
 /**
  * 任务提交 / 取消的业务入口（业务模块注入此服务，调用 submit/cancel）。
@@ -127,4 +127,8 @@ export class JobService {
 
     return this.records.toDomain(cancelled);
   } 
+
+   list(query: IListJobsQuery) {
+    return this.records.list(query);
+  }
 }
