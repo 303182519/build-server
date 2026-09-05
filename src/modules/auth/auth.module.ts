@@ -38,5 +38,6 @@ import { JwtAuthStrategy } from './strategies/jwt-auth.strategy';
     OAuthStateService,
     OAuthTicketService,
   ],
+  exports: [RefreshTokenService],
 })
 export class AuthModule {}

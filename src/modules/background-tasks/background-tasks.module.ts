@@ -7,7 +7,7 @@ import { ExportReportHandler } from './handlers/export-report.handler';
 import { FlakyRetryHandler } from './handlers/flaky-retry.handler';
 
 @Module({
-  imports: [JobsModule, AuthModule],
+  imports: [AuthModule, JobsModule],
   controllers: [BackgroundTasksController],
   providers: [
     ExportReportHandler,
