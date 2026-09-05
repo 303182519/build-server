@@ -30,6 +30,16 @@ export interface ISubmitJobInput {
   createdBy?: string;
 }
 
+export interface IJobRunCreateData {
+  name: string;
+  queueName: string;
+  payload?: unknown;
+  maxAttempts: number;
+  triggerType: JobTriggerType;
+  createdBy?: string;
+  status?: JobStatus;
+}
+
 export interface IJobRunView {
   id: string;
   name: string;
