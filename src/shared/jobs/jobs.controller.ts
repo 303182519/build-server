@@ -102,7 +102,6 @@ export class JobsController {
   }
 
   @Post(':id/cancel')
-  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '取消 queued / delayed 任务' })
   @idParam
   cancel(@Param('id') id: string) {
