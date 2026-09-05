@@ -6,7 +6,8 @@ import {
 import { PrismaService } from '@/shared/database/prisma/prisma.service';
 import { JobRun as PrismaJobRun } from '@prisma/client';
 import { generateSnowflakeId } from '@/shared/utils/snowflake';
-
+import { JobEventsService } from '../events/job-events.service';
+import { resolveJobSseEventName } from '../events/job-sse.util';
 import {
   JOB_STATUS,
   type JobStatus,
@@ -25,7 +26,10 @@ const MAX_ERROR_MESSAGE_LENGTH = 2000;
  */
 @Injectable()
 export class JobRecordService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jobEvents: JobEventsService,
+  ) {}
 
   // ── 映射：DB 行 → 领域实体 ──────────────────────────────────────────
   private toDomain(row: PrismaJobRun): IJobRunView {
