@@ -70,6 +70,9 @@ const buildBullPrefix = (keyPrefix?: string) =>
         return {
           connection: buildRedisConnection(redis),
           prefix: buildBullPrefix(redis.keyPrefix),
+          // 限制 BullMQ 内部 events Stream 的最大条目数，防止无限增长。
+          // 仅用于 QueueEvents 回放，保留最近 10000 条足够覆盖运维排查窗口。
+          streams: { events: { maxLen: 10000 } },
         };
       },
     }),
