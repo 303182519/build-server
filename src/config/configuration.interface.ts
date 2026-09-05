@@ -55,6 +55,17 @@ export interface GithubConfig {
   frontendRedirectUrl?: string;
 }
 
+export interface BoardConfig {
+  /** 是否启用 Bull Board 任务监控面板 */
+  enabled: boolean;
+  /** 面板挂载路径（Express 中间件路径，不含 /api 前缀） */
+  path: string;
+  /** 认证类型：jwt = 校验 JWT 令牌 + 特殊角色；none = 无认证（仅限开发/内网） */
+  authType: 'jwt' | 'none';
+  /** 只读模式：仅允许查看，禁止重试/清理/删除等操作 */
+  readOnly: boolean;
+}
+
 export interface AppConfig {
   server?: ServerConfig;
   swagger?: SwaggerConfig;
@@ -64,6 +75,7 @@ export interface AppConfig {
   redis?: RedisConfig;
   throttler?: ThrottlerConfig;
   github?: GithubConfig;
+  board?: BoardConfig;
 }
 
 export type AppConfigForced = {

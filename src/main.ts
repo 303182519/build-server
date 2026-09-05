@@ -5,6 +5,7 @@ import { getAppConfig } from './config/configuration';
 import { useSwagger } from './shared/utils/swagger';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { initSnowflake } from './shared/utils/snowflake';
+import { JobBoardService } from './shared/jobs/board/job-board.service';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -45,6 +46,19 @@ async function bootstrap() {
   // });
 
   useSwagger(app);
+
+  // ── Bull Board 任务监控面板 ──────────────────────────────────────
+  // 必须在 NestJS 路由初始化之前挂载，以绕过全局 Guard 链
+  // （JwtAuthGuard / PermissionGuard / ThrottlerGuard）。
+  // 面板认证由 JobBoardService 内部中间件独立负责。
+  const boardService = app.get(JobBoardService, { strict: false });
+  const boardMiddleware = boardService.setupMiddleware();
+  app.use(appConfig.board.path, boardMiddleware);
+  if (appConfig.board.enabled) {
+    Logger.log(
+      `\x1b[34mBull Board: http://127.0.0.1:${server.port}${appConfig.board.path}\x1b[0m`,
+    );
+  }
 
   // 没开这个，容器 SIGTERM 时正在处理的请求会被一刀切断
   // OnApplicationShutdown 钩子也不会触发，连接池泄漏的经典源头

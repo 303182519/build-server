@@ -64,5 +64,11 @@ export const defaultConfig = registerAs('default', (): AppConfig => ({
     frontendRedirectUrl:
       process.env.FRONTEND_REDIRECT_URL ||
       'http://localhost:3001/#/about?type=callback',
-    },
+  },
+  board: {
+    enabled: process.env.BULL_BOARD_ENABLED !== 'false',
+    path: process.env.BULL_BOARD_PATH || '/admin/queues',
+    authType: (process.env.BULL_BOARD_AUTH_TYPE as 'jwt' | 'none') || 'jwt',
+    readOnly: process.env.BULL_BOARD_READ_ONLY === 'true',
+  },
 }));

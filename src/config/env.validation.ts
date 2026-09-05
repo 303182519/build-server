@@ -46,4 +46,10 @@ export const validationSchema = Joi.object({
   NODE_ENV: Joi.string()
     .valid('development', 'production', 'test')
     .default('development'),
+
+  // Bull Board（任务监控面板）
+  BULL_BOARD_ENABLED: Joi.string().valid('true', 'false'),
+  BULL_BOARD_PATH: Joi.string(),
+  BULL_BOARD_AUTH_TYPE: Joi.string().valid('jwt', 'none'),
+  BULL_BOARD_READ_ONLY: Joi.string().valid('true', 'false'),
 }).oxor('REDIS_URL', 'REDIS_HOST'); // Redis 连接二选一，也可都不提供

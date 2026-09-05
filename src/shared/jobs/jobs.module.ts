@@ -7,12 +7,14 @@ import { JobRegistryService } from './registry/job-registry.service';
 import { JobService } from './services/job.service';
 import { JobEventsService } from './events/job-events.service';
 import { JobsController } from './jobs.controller';
+import { JobBoardModule } from './board/job-board.module';
 
 /**
  * 任务系统统一入口模块。
  *
  * 聚合底层 BullMQ 队列（JobQueueModule）、执行记录持久化（JobRecordService）、
- * 处理器注册表（JobRegistryService）、worker（JobProcessor）与业务入口（JobService）。
+ * 处理器注册表（JobRegistryService）、worker（JobProcessor）、业务入口（JobService）
+ * 与任务监控面板（JobBoardModule）。
  *
  * 业务模块接入方式：
  *   imports: [JobsModule]                       —— 拿到 JobService 提交/取消任务
@@ -20,7 +22,7 @@ import { JobsController } from './jobs.controller';
  */
 @Global()
 @Module({
-  imports: [JobQueueModule],
+  imports: [JobQueueModule, JobBoardModule],
   controllers: [JobsController],
   providers: [
     JobRegistryService,
