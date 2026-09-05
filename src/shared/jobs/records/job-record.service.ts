@@ -74,6 +74,73 @@ export class JobRecordService {
     return this.toDomain(row);
   }
 
+
+  /**
+   * 仅当任务仍可执行（queued/delayed）时激活。
+   * 返回 false 表示取消或其他终态已抢先，worker 应跳过执行。
+   */
+  async markActive(
+    jobId: string,
+    bullJobId?: string,
+    attemptsMade?: number,
+  ): Promise<boolean> {
+    const result = await this.jobRunRepository
+      .createQueryBuilder()
+      .update(JobRun)
+      .set({
+        status: JOB_STATUS.ACTIVE,
+        bullJobId: bullJobId ?? undefined,
+        attemptsMade:
+          typeof attemptsMade === 'number' ? attemptsMade : undefined,
+        startedAt: () => 'COALESCE(started_at, NOW())',
+      })
+      .where('id = :jobId', { jobId })
+      .andWhere('status IN (:...statuses)', {
+        statuses: [JOB_STATUS.QUEUED, JOB_STATUS.DELAYED],
+      })
+      .execute();
+
+    const affected = Boolean(result.affected);
+    if (affected) {
+      await this.publishJobEvent(jobId);
+    }
+
+    return affected;
+  }
+
+  async updateProgress(jobId: string, progress: number): Promise<void> {
+    const normalized = Math.max(0, Math.min(100, Math.round(progress)));
+    const result = await this.jobRunRepository
+      .createQueryBuilder()
+      .update(JobRun)
+      .set({
+        progress: normalized,
+        status: JOB_STATUS.ACTIVE,
+      })
+      .where('id = :jobId', { jobId })
+      .andWhere('status = :status', { status: JOB_STATUS.ACTIVE })
+      .execute();
+
+    if (result.affected) {
+      await this.publishJobEvent(jobId);
+    }
+  }
+
+  async markCompleted(
+    jobId: string,
+    result: unknown,
+    attemptsMade?: number,
+  ): Promise<void> {
+    const run = await this.getEntityOrFail(jobId);
+    run.status = JOB_STATUS.COMPLETED;
+    run.progress = 100;
+    run.result = (result as object | undefined) ?? null;
+    run.errorMessage = null;
+    if (typeof attemptsMade === 'number') run.attemptsMade = attemptsMade;
+    run.finishedAt = new Date();
+    await this.jobRunRepository.save(run);
+    this.publishJobRunEvent(run);
+  }
   
   async attachBullJobId(jobId: string, bullJobId: string): Promise<void> {
     await this.prisma.jobRun.update({ where: { id: BigInt(jobId) }, data: { bullJobId } });
