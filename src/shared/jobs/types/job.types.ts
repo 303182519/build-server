@@ -87,3 +87,21 @@ export const JOB_CANCELLABLE_STATUSES: readonly JobStatus[] = [
   JOB_STATUS.QUEUED,
   JOB_STATUS.DELAYED,
 ] as const;
+
+/**
+ * 死信任务视图：DB 记录处于非终态但超过阈值仍未推进。
+ * deadReason 标识死信成因，供补偿逻辑决策参考。
+ */
+export interface IJobDeadLetterView {
+  id: string;
+  name: string;
+  status: JobStatus;
+  progress: number;
+  attemptsMade: number;
+  maxAttempts: number;
+  errorMessage?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  startedAt?: Date | null;
+  deadReason: 'stuck_queued' | 'stuck_active' | 'stuck_delayed';
+}

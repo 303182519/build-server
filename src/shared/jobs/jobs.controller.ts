@@ -3,6 +3,7 @@ import {
   Get,
   ForbiddenException,
   HttpStatus,
+  NotFoundException,
   Param,
   Post,
   Query,
@@ -15,11 +16,13 @@ import {
   ApiBearerAuth,
   ApiOperation,
   ApiParam,
+  ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
 import { JobEventsService } from './events/job-events.service';
 import { formatSseEvent } from './events/job-sse.util';
 import { ListJobsDto } from './dto/list-jobs.dto';
+import { QueryDeadLettersDto } from './dto/query-dead-letters.dto';
 import { JobService } from './services/job.service';
 import { JOB_TERMINAL_STATUSES } from './types/job.types';
 import { SkipTimeout } from '@/common/decorators/skip-timeout.decorator';
@@ -54,6 +57,22 @@ export class JobsController {
   @ApiOperation({ summary: '分页查询任务执行记录' })
   list(@Query() query: ListJobsDto) {
     return this.jobService.list(query);
+  }
+
+  @Get('dead-letters')
+  @ApiOperation({ summary: '查询死信任务（非终态且超过阈值未推进）' })
+  @ApiQuery({
+    name: 'timeoutMinutes',
+    required: false,
+    description: '死信阈值（分钟），默认 30',
+  })
+  @ApiQuery({
+    name: 'name',
+    required: false,
+    description: '按任务名过滤',
+  })
+  listDeadLetters(@Query() query: QueryDeadLettersDto) {
+    return this.jobService.findDeadLetters(query.timeoutMinutes, query.name);
   }
 
   @Get(':id/events')
@@ -167,5 +186,18 @@ export class JobsController {
   @idParam
   cancel(@Param('id', ParseSnowflakePipe) id: bigint) {
     return this.jobService.cancel(id.toString());
+  }
+
+  @Post(':id/compensate')
+  @ApiOperation({
+    summary: '补偿死信任务（重新入队或标记失败）',
+  })
+  @idParam
+  async compensate(@Param('id', ParseSnowflakePipe) id: bigint) {
+    const result = await this.jobService.compensate(id.toString());
+    if (!result) {
+      throw new NotFoundException('任务已达终态或不可补偿');
+    }
+    return result;
   }
 }

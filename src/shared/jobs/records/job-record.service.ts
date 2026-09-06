@@ -17,6 +17,7 @@ import {
   type IJobRunView,
   type IJobRunCreateData,
   type IListJobsQuery,
+  type IJobDeadLetterView,
 } from '../types/job.types';
 
 const MAX_ERROR_MESSAGE_LENGTH = 2000;
@@ -313,6 +314,55 @@ export class JobRecordService {
       page,
       pageSize,
     };
+  }
+
+  /**
+   * 查询死信任务：DB 记录处于非终态（queued/active/delayed）且超过阈值仍未推进。
+   *
+   * 死信成因分类：
+   * - stuck_active：worker 崩溃或进程退出，active 状态无人推进
+   * - stuck_queued：BullMQ job 丢失（Redis 重启 / 数据清理），queued 无人消费
+   * - stuck_delayed：同上，delayed 状态无人触发
+   */
+  async findDeadLetters(
+    timeoutMs: number,
+    name?: string,
+  ): Promise<IJobDeadLetterView[]> {
+    const cutoff = new Date(Date.now() - timeoutMs);
+
+    const rows = await this.prisma.jobRun.findMany({
+      where: {
+        status: {
+          in: [JOB_STATUS.QUEUED, JOB_STATUS.ACTIVE, JOB_STATUS.DELAYED],
+        },
+        updatedAt: { lt: cutoff },
+        ...(name ? { name } : {}),
+      },
+      orderBy: [{ updatedAt: 'asc' }, { id: 'desc' }],
+      take: 200,
+    });
+
+    return rows.map((row) => {
+      const status = row.status as JobStatus;
+      let deadReason: IJobDeadLetterView['deadReason'];
+      if (status === JOB_STATUS.ACTIVE) deadReason = 'stuck_active';
+      else if (status === JOB_STATUS.DELAYED) deadReason = 'stuck_delayed';
+      else deadReason = 'stuck_queued';
+
+      return {
+        id: row.id.toString(),
+        name: row.name,
+        status,
+        progress: row.progress,
+        attemptsMade: row.attemptsMade,
+        maxAttempts: row.maxAttempts,
+        errorMessage: row.errorMessage,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        startedAt: row.startedAt,
+        deadReason,
+      };
+    });
   }
 
   /**

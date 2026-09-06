@@ -48,6 +48,14 @@ export class JobQueueService {
     return job;
   }
 
+  /**
+   * 查询 BullMQ 队列中指定 job 是否仍存在。
+   * 返回 null 表示 job 已不在队列中（已消费 / 已清理 / 已丢失）。
+   */
+  async getJob(bullJobId: string) {
+    return this.queue.getJob(bullJobId);
+  }
+
   async remove(bullJobId: string): Promise<boolean> {
     const job = await this.queue.getJob(bullJobId);
     if (!job) return false;

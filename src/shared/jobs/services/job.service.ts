@@ -10,11 +10,13 @@ import {
   DEFAULT_JOB_QUEUE,
   JOB_STATUS,
   JOB_TRIGGER_TYPE,
+  type JobStatus,
 } from '../constants/job.constants';
 import {
   type ISubmitJobInput,
   type IJobRunView,
   type IListJobsQuery,
+  type IJobDeadLetterView,
 } from '../types/job.types';
 
 /**
@@ -142,5 +144,92 @@ export class JobService {
 
   list(query: IListJobsQuery) {
     return this.records.list(query);
+  }
+
+  /**
+   * 查询死信任务：DB 记录处于非终态且超过阈值仍未推进。
+   *
+   * 典型成因：
+   * - worker 进程崩溃 / 重启，active job 无人推进
+   * - BullMQ job 被 Redis 清理（重启 / maxLen 策略），queued/delayed 无人消费
+   * - Redis 断连期间 BullMQ 丢失 job，DB 记录未同步更新
+   */
+  findDeadLetters(
+    timeoutMinutes: number = 30,
+    name?: string,
+  ): Promise<IJobDeadLetterView[]> {
+    return this.records.findDeadLetters(timeoutMinutes * 60 * 1000, name);
+  }
+
+  /**
+   * 补偿单个死信任务。
+   *
+   * 策略：
+   * - queued / delayed：检查 BullMQ 中 job 是否仍存在。
+   *   仍存在 → 跳过（BullMQ 会自行消费）；
+   *   不存在 → 重新入队，BullMQ 使用相同 jobId 保证幂等。
+   * - active：检查 BullMQ 中 job 是否仍存在。
+   *   仍存在 → 跳过（worker 可能仍在执行，避免双重执行）；
+   *   不存在 → 推进至 failed 终态（worker 已崩溃，任务不可恢复）。
+   *
+   * 返回 null 表示任务已不可补偿（已达终态或已被其他流程处理）。
+   */
+  async compensate(jobId: string): Promise<IJobRunView | null> {
+    const run = await this.records.getEntityOrFail(jobId);
+    const status = run.status as JobStatus;
+
+    // 已达终态，无需补偿
+    if (
+      status === JOB_STATUS.COMPLETED ||
+      status === JOB_STATUS.FAILED ||
+      status === JOB_STATUS.CANCELLED
+    ) {
+      return null;
+    }
+
+    // 检查 BullMQ 队列中 job 是否仍存在
+    let bullJobExists = false;
+    if (run.bullJobId) {
+      const bullJob = await this.queue.getJob(run.bullJobId);
+      bullJobExists = bullJob !== null;
+    }
+
+    if (status === JOB_STATUS.QUEUED || status === JOB_STATUS.DELAYED) {
+      if (bullJobExists) {
+        // BullMQ job 仍在队列中，等待 worker 消费，无需干预
+        return this.records.getViewOrFail(jobId);
+      }
+
+      // BullMQ job 已丢失，重新入队（使用相同 jobId 保证幂等）
+      this.logger.warn(
+        `Compensating dead letter jobId=${jobId} name=${run.name}: re-enqueue (was ${status})`,
+      );
+      await this.queue.enqueue(
+        { jobId: run.id.toString(), name: run.name, payload: run.payload },
+        { jobId: run.id.toString(), attempts: run.maxAttempts },
+      );
+      return this.records.getViewOrFail(jobId);
+    }
+
+    if (status === JOB_STATUS.ACTIVE) {
+      if (bullJobExists) {
+        // BullMQ job 仍存在（worker 可能仍在执行），跳过以避免双重执行
+        return this.records.getViewOrFail(jobId);
+      }
+
+      // Worker 已崩溃，BullMQ job 不存在，标记为 failed
+      this.logger.warn(
+        `Compensating dead letter jobId=${jobId} name=${run.name}: worker crashed, marking failed`,
+      );
+      await this.records.markAttemptFailure(
+        jobId,
+        run.attemptsMade,
+        new Error('Worker process crashed — job timed out in active state'),
+        true,
+      );
+      return this.records.getViewOrFail(jobId);
+    }
+
+    return null;
   }
 }
