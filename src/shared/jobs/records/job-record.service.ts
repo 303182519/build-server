@@ -153,7 +153,7 @@ export class JobRecordService {
       },
     });
     // 事件发布为「尽力而为」的副作用，不阻塞主流程。
-    this.publishJobEventSafe(jobId);
+    await this.publishJobEventSafe(jobId);
   }
 
   async attachBullJobId(jobId: string, bullJobId: string): Promise<void> {
