@@ -26,8 +26,8 @@ export class JobQueueService {
     const opts: JobsOptions = {
       jobId: options?.jobId,
       attempts,
-      removeOnComplete: { count: 1000 },
-      removeOnFail: { count: 5000 },
+      // removeOnComplete / removeOnFail 已在 JobQueueModule defaultJobOptions 统一配置，
+      // 此处不再重复声明，避免两处数值不一致导致维护混乱
     };
 
     if (options?.delayMs && options.delayMs > 0) {

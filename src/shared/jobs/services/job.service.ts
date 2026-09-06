@@ -11,7 +11,11 @@ import {
   JOB_STATUS,
   JOB_TRIGGER_TYPE,
 } from '../constants/job.constants';
-import { type ISubmitJobInput, type IJobRunView, type IListJobsQuery } from '../types/job.types';
+import {
+  type ISubmitJobInput,
+  type IJobRunView,
+  type IListJobsQuery,
+} from '../types/job.types';
 
 /**
  * 任务提交 / 取消的业务入口（业务模块注入此服务，调用 submit/cancel）。
@@ -75,13 +79,22 @@ export class JobService {
         },
       );
       bullJobId = bullJob.id ? String(bullJob.id) : undefined;
-    } catch (error) {
-      await this.records.markAttemptFailure(run.id, 0, error, true);
+    } catch (enqueueError) {
+      // 落库成功但入队失败：将 DB 记录推进至 failed 终态，防止悬空 queued 记录
+      try {
+        await this.records.markAttemptFailure(run.id, 0, enqueueError, true);
+      } catch (markError) {
+        this.logger.error(
+          `Failed to mark jobId=${run.id} as failed after enqueue failure: ${
+            markError instanceof Error ? markError.message : String(markError)
+          }`,
+        );
+      }
       this.logger.error(
         `Failed to enqueue jobId=${run.id} name=${input.name}`,
-        error instanceof Error ? error.stack : undefined,
+        enqueueError instanceof Error ? enqueueError.stack : undefined,
       );
-      throw error;
+      throw enqueueError;
     }
 
     if (bullJobId) {
@@ -96,7 +109,6 @@ export class JobService {
     }
 
     return this.records.getViewOrFail(run.id);
-
   }
   /**
    * 根据 jobId 获取任务详情。
@@ -126,9 +138,9 @@ export class JobService {
     }
 
     return this.records.toDomain(cancelled);
-  } 
+  }
 
-   list(query: IListJobsQuery) {
+  list(query: IListJobsQuery) {
     return this.records.list(query);
   }
 }

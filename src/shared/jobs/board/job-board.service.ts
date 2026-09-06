@@ -80,7 +80,6 @@ export class JobBoardService {
 
       try {
         const token = this.extractToken(req);
-        console.log('Token:', token);
         if (!token) {
           res.status(401).json({ error: 'Authentication required' });
           return;
@@ -95,20 +94,20 @@ export class JobBoardService {
         // 注意：此处仅做基础角色快速校验，完整权限体系由 NestJS PermissionGuard 负责
         // 由于 Board 绕过了 NestJS Guard 链，这里需要自行校验
         // 如果需要更精细的权限校验，可扩展为查询数据库
-        // const specialRole =
-        //   (payload.specialRoles as string | undefined) ??
-        //   (payload['specialRoles'] as string | undefined);
+        const specialRole =
+          (payload.specialRoles as string | undefined) ??
+          (payload['specialRoles'] as string | undefined);
 
-        // if (
-        //   specialRole !== SpecialRolesEnum.SuperAdmin &&
-        //   specialRole !== SpecialRolesEnum.Developer
-        // ) {
-        //   this.logger.warn(
-        //     `Board 访问拒绝：userId=${userId} specialRoles=${specialRole ?? 'none'}`,
-        //   );
-        //   res.status(403).json({ error: 'Insufficient permissions' });
-        //   return;
-        // }
+        if (
+          specialRole !== SpecialRolesEnum.SuperAdmin &&
+          specialRole !== SpecialRolesEnum.Developer
+        ) {
+          this.logger.warn(
+            `Board 访问拒绝：userId=${userId} specialRoles=${specialRole ?? 'none'}`,
+          );
+          res.status(403).json({ error: 'Insufficient permissions' });
+          return;
+        }
 
         // 认证通过，转发到 Board 路由
         boardRouter(req, res, next);

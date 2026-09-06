@@ -141,8 +141,12 @@ export class JobRecordService {
     result: unknown,
     attemptsMade?: number,
   ): Promise<void> {
-    await this.prisma.jobRun.update({
-      where: { id: BigInt(jobId) },
+    // 条件更新：仅 active 状态可推进到 completed，防止并发 cancel 后覆盖终态
+    const updated = await this.prisma.jobRun.updateMany({
+      where: {
+        id: BigInt(jobId),
+        status: JOB_STATUS.ACTIVE,
+      },
       data: {
         status: JOB_STATUS.COMPLETED,
         progress: 100,
@@ -152,6 +156,14 @@ export class JobRecordService {
         finishedAt: new Date(),
       },
     });
+
+    if (updated.count === 0) {
+      this.logger.warn(
+        `Skip markCompleted jobId=${jobId}: not in active state`,
+      );
+      return;
+    }
+
     // 事件发布为「尽力而为」的副作用，不阻塞主流程。
     await this.publishJobEventSafe(jobId);
   }
@@ -165,7 +177,7 @@ export class JobRecordService {
   /**
    * 标记单次尝试失败。
    *
-   * 使用条件更新（WHERE status = active）防止并发场景下覆盖终态：
+   * 使用条件更新（WHERE status = 'active'）防止并发场景下覆盖终态：
    * - 若任务已被 cancel/complete，条件不匹配，update 静默跳过，不会错误回退状态。
    * - isFinal=true 时推进至 failed 终态；否则回退至 queued 等待下次重试。
    */
@@ -193,10 +205,11 @@ export class JobRecordService {
       return;
     }
 
-    // 非终态失败：回退至 queued 等待 BullMQ 重试。
+    // 非终态失败：条件回退至 queued（仅 active 状态可回退，防止 cancel 后被错误恢复）
     await this.prisma.jobRun.updateMany({
       where: {
         id: BigInt(jobId),
+        status: JOB_STATUS.ACTIVE,
       },
       data: {
         status: JOB_STATUS.QUEUED,

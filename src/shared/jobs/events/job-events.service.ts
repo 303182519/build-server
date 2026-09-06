@@ -32,6 +32,12 @@ export class JobEventsService implements OnModuleDestroy {
 
   /** 进程内事件总线：所有 SSE 订阅者通过此 Subject 接收事件 */
   private readonly events$ = new Subject<IJobSseEvent>();
+  /**
+   * 事件序号（per-instance）。
+   * 用作 SSE event id，每个实例独立计数、重启后归零。
+   * SSE 规范不强制全局唯一，配合 snapshot 机制（连接时推送当前状态快照）
+   * 可覆盖断连期间的序号间隙。
+   */
   private sequence = 0;
 
   /** Redis Pub/Sub 发布者（独立连接） */

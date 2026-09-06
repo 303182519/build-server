@@ -79,12 +79,14 @@ export class JobsController {
     // ── 2. 先查 snapshot（此时未发 SSE 头，异常可正常返回 HTTP 状态码） ──
     const snapshot = await this.jobService.getById(id);
 
-    // ── 3. 权限校验：createdBy 有值时必须匹配当前用户 ──
-    if (snapshot.createdBy) {
-      const currentUser = useRequestUser();
-      if (snapshot.createdBy !== currentUser.id.toString()) {
-        throw new ForbiddenException('无权查看该任务');
-      }
+    // ── 3. 权限校验 ──
+    // createdBy 有值时必须匹配当前用户；无 createdBy 的系统任务拒绝非授权访问
+    if (!snapshot.createdBy) {
+      throw new ForbiddenException('无权查看该任务');
+    }
+    const currentUser = useRequestUser();
+    if (snapshot.createdBy !== currentUser.id.toString()) {
+      throw new ForbiddenException('无权查看该任务');
     }
 
     // ── 4. 发送 SSE 响应头 ──
