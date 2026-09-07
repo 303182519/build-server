@@ -17,6 +17,12 @@ export interface ProcessedImage {
 }
 
 /**
+ * 图片尺寸硬上限（像素）：超过这个尺寸 sharp 解码会消耆大量内存（一张 20000×20000 RGBA ≈ 1.5GB）。
+ * 这个上限和 coverMaxWidth 不同——后者是「归一化目标宽度」，这里是「拒绝处理的绝对上限」。
+ */
+const MAX_DIMENSION_PX = 10_000;
+
+/**
  * ImageProcessorService —— 用 sharp 对上传图片做「核验 + 归一化」。
  *
  * 两件事，缺一不可：
@@ -47,12 +53,27 @@ export class ImageProcessorService {
       throw new ErrorException(StorageExceptionCode.INVALID_FILE);
     }
 
+    // ② 尺寸硬上限：防止超大图解码时 OOM（像素结构合法但尺寸不合理）。
+    if (meta.width > MAX_DIMENSION_PX || meta.height > MAX_DIMENSION_PX) {
+      this.logger.warn(
+        `图片尺寸超限：${meta.width}×${meta.height}（上限 ${MAX_DIMENSION_PX}px）`,
+      );
+      throw new ErrorException(StorageExceptionCode.INVALID_FILE);
+    }
+
+    // ③ 动画图提个日志：sharp 处理 GIF 只取第一帧，结果是静态图——这是预期行为，但留痕便于排查。
+    if (meta.format === 'gif' && (meta.pages ?? 1) > 1) {
+      this.logger.debug(
+        `动画 GIF 只取第一帧作为封面：${meta.width}×${meta.height}，${meta.pages} 帧`,
+      );
+    }
+
     const { upload } = getConfig(this.configService);
 
     const maxWidth = upload.coverMaxWidth;
     const format = upload.coverFormat;
 
-    // ② 归一化：自动按 EXIF 旋正 → 限制最大宽（不放大）→ 转目标格式。
+    // ④ 归一化：自动按 EXIF 旋正 → 限制最大宽（不放大）→ 转目标格式。
     const { data, info } = await sharp(buffer)
       .rotate() // 0 参数 = 按 EXIF Orientation 自动旋正
       .resize({ width: maxWidth, withoutEnlargement: true }) // 小图不放大

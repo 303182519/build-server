@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { ErrorException } from '@/common/exceptions/error.exception';
+import { StorageExceptionCode } from '@/common/exceptions/storage.exception';
 import { getConfig } from '@/config/configuration';
 import type { SaveInput, StoredFile, StorageService } from './storage.service';
 
@@ -33,10 +36,24 @@ export class LocalStorageService implements StorageService {
   }
 
   async save(input: SaveInput): Promise<StoredFile> {
-    const abs = join(this.root, input.key);
+    const abs = this.safeAbs(input.key);
+    if (!abs) {
+      // 即便 key 是内部生成的，防御也放在边界上——纵深防御不依赖「调用方一定传安全值」。
+      throw new ErrorException(StorageExceptionCode.INVALID_FILE);
+    }
     // 确保父目录存在（key 可能是 covers/<id>/<file> 这种多层）。
     await fs.mkdir(dirname(abs), { recursive: true });
-    await fs.writeFile(abs, input.buffer);
+    // 原子写入：先写临时文件，再 rename。防止进程崩溃 / 磁盘满留下半写损坏文件。
+    // 同文件系统下 rename 是原子操作，读者要么看到旧文件要么看到完整新文件。
+    const tmp = `${abs}.tmp.${randomUUID()}`;
+    try {
+      await fs.writeFile(tmp, input.buffer);
+      await fs.rename(tmp, abs);
+    } catch (e) {
+      // 写入失败时清理临时文件（best-effort）
+      await fs.rm(tmp, { force: true }).catch(() => {});
+      throw e;
+    }
     return {
       key: input.key,
       url: this.publicUrl(input.key),
