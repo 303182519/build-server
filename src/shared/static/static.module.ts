@@ -12,7 +12,8 @@ import { join } from 'path';
         rootPath: join(process.cwd(), 'client'),
         // 把 SPA 回退的范围从"所有 GET"收窄成"除了 /api/ 和 /uploads/ 以外的 GET"。
         // 避免 /uploads/xxx.jpg 被 SPA 回退吞掉返回 index.html。
-        exclude: ['/api/(.*)', '/uploads/(.*)'],
+        // path-to-regexp v8 通配符语法：{*splat}（不再支持 (.*)）
+        exclude: ['/api/{*splat}', '/uploads/{*splat}'],
         serveStaticOptions: {
           cacheControl: true,
           maxAge: '30d',
