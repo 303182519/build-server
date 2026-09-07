@@ -6,6 +6,7 @@ export const StorageExceptionCode = {
   UPLOAD_TOO_LARGE: '16413',
   UNSUPPORTED_MEDIA_TYPE: '16415',
   STORAGE_FAILED: '16502',
+  TOO_MANY_UPLOADS: '16503',
 } as const;
 
 export type StorageExceptionCode =
@@ -32,5 +33,10 @@ export const StorageExceptionMap: Record<StorageExceptionCode, ExceptionInfo> =
       message: '文件存储失败，请稍后重试',
       status: HttpStatus.BAD_GATEWAY,
       code: StorageExceptionCode.STORAGE_FAILED,
+    },
+    [StorageExceptionCode.TOO_MANY_UPLOADS]: {
+      message: '当前上传请求过多，请稍后重试',
+      status: HttpStatus.SERVICE_UNAVAILABLE,
+      code: StorageExceptionCode.TOO_MANY_UPLOADS,
     },
   };

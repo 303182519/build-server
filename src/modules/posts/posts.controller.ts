@@ -9,7 +9,6 @@ import {
   Patch,
   UploadedFile,
   UseInterceptors,
-  HttpCode,
 } from '@nestjs/common';
 import type { User } from '@prisma/client';
 import {
@@ -201,6 +200,10 @@ export class PostsController {
   @ApiExceptionEnvelope(
     StorageExceptionMap,
     StorageExceptionCode.STORAGE_FAILED,
+  )
+  @ApiExceptionEnvelope(
+    StorageExceptionMap,
+    StorageExceptionCode.TOO_MANY_UPLOADS,
   )
   uploadCover(
     @Param('id', ParseSnowflakePipe) id: bigint,
