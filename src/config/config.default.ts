@@ -71,4 +71,24 @@ export const defaultConfig = registerAs('default', (): AppConfig => ({
     authType: (process.env.BULL_BOARD_AUTH_TYPE as 'jwt' | 'none') || 'jwt',
     readOnly: process.env.BULL_BOARD_READ_ONLY === 'true',
   },
+  storage: {
+    backend: (process.env.STORAGE_BACKEND as 'local' | 's3') || 'local',
+    localDir: process.env.STORAGE_LOCAL_DIR || 'uploads',
+    publicPrefix: process.env.STORAGE_PUBLIC_PREFIX || '/uploads',
+  },
+  upload: {
+    maxBytes: parseNumberEnv(process.env.UPLOAD_MAX_BYTES, 5_242_880),
+    coverMaxWidth: parseNumberEnv(process.env.UPLOAD_COVER_MAX_WIDTH, 1600),
+    coverFormat:
+      (process.env.UPLOAD_COVER_FORMAT as 'webp' | 'jpeg' | 'png') || 'webp',
+  },
+  s3: {
+    region: process.env.S3_REGION || 'auto',
+    endpoint: process.env.S3_ENDPOINT || undefined,
+    forcePathStyle: process.env.S3_FORCE_PATH_STYLE === 'true',
+    bucket: process.env.S3_BUCKET || '',
+    accessKeyId: process.env.S3_ACCESS_KEY_ID || undefined,
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || undefined,
+    publicBaseUrl: process.env.S3_PUBLIC_BASE_URL || undefined,
+  },
 }));

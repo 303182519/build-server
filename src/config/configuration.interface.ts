@@ -55,6 +55,41 @@ export interface GithubConfig {
   frontendRedirectUrl?: string;
 }
 
+export interface StorageConfig {
+  /** 存储后端类型：local = 本地磁盘，s3 = S3 兼容对象存储 */
+  backend: 'local' | 's3';
+  /** local 模式：文件写入根目录（相对 cwd 或绝对路径） */
+  localDir: string;
+  /** local 模式：对外 URL 前缀，需和 main.ts 挂载的 static prefix 一致 */
+  publicPrefix: string;
+}
+
+export interface UploadConfig {
+  /** 单文件硬上限（字节），超过则 multer 在缓冲阶段中断 */
+  maxBytes: number;
+  /** 封面归一化最大宽度（像素） */
+  coverMaxWidth: number;
+  /** 封面归一化目标格式 */
+  coverFormat: 'webp' | 'jpeg' | 'png';
+}
+
+export interface S3Config {
+  /** S3 区域 */
+  region: string;
+  /** S3 端点（AWS 留空，R2/MinIO 填写） */
+  endpoint?: string;
+  /** 是否使用 path-style 寻址（MinIO = true，AWS/R2 = false） */
+  forcePathStyle: boolean;
+  /** Bucket 名称 */
+  bucket: string;
+  /** 访问密钥 ID */
+  accessKeyId?: string;
+  /** 访问密钥 Secret */
+  secretAccessKey?: string;
+  /** 公开访问前缀（CDN / 自定义域），不填则按 endpoint+bucket 拼接 */
+  publicBaseUrl?: string;
+}
+
 export interface BoardConfig {
   /** 是否启用 Bull Board 任务监控面板 */
   enabled: boolean;
@@ -76,6 +111,9 @@ export interface AppConfig {
   throttler?: ThrottlerConfig;
   github?: GithubConfig;
   board?: BoardConfig;
+  storage?: StorageConfig;
+  upload?: UploadConfig;
+  s3?: S3Config;
 }
 
 export type AppConfigForced = {

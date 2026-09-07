@@ -52,4 +52,25 @@ export const validationSchema = Joi.object({
   BULL_BOARD_PATH: Joi.string(),
   BULL_BOARD_AUTH_TYPE: Joi.string().valid('jwt', 'none'),
   BULL_BOARD_READ_ONLY: Joi.string().valid('true', 'false'),
+
+  // 文件存储
+  STORAGE_BACKEND: Joi.string().valid('local', 's3').default('local'),
+  STORAGE_LOCAL_DIR: Joi.string().default('uploads'),
+  STORAGE_PUBLIC_PREFIX: Joi.string().default('/uploads'),
+
+  // 文件上传
+  UPLOAD_MAX_BYTES: Joi.number().integer().min(1).default(5242880),
+  UPLOAD_COVER_MAX_WIDTH: Joi.number().integer().min(1).default(1600),
+  UPLOAD_COVER_FORMAT: Joi.string()
+    .valid('webp', 'jpeg', 'png')
+    .default('webp'),
+
+  // S3 兼容对象存储
+  S3_REGION: Joi.string().default('auto'),
+  S3_ENDPOINT: Joi.string().allow(''),
+  S3_FORCE_PATH_STYLE: Joi.string().valid('true', 'false').default('false'),
+  S3_BUCKET: Joi.string().allow(''),
+  S3_ACCESS_KEY_ID: Joi.string().allow(''),
+  S3_SECRET_ACCESS_KEY: Joi.string().allow(''),
+  S3_PUBLIC_BASE_URL: Joi.string().allow(''),
 }).oxor('REDIS_URL', 'REDIS_HOST'); // Redis 连接二选一，也可都不提供
