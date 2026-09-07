@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { CoverUploadInterceptor } from './cover-upload.interceptor';
 import { ImageProcessorService } from './image-processor.service';
 import { LocalStorageService } from './local-storage.service';
 import { S3StorageService } from './s3-storage.service';
@@ -14,6 +15,7 @@ import { getConfig } from '@/config/configuration';
   imports: [ConfigModule],
   providers: [
     ImageProcessorService,
+    CoverUploadInterceptor,
 
     {
       // 按 STORAGE_BACKEND 选后端：local（默认）→ 本地磁盘；s3 → S3 兼容对象存储。
@@ -36,6 +38,6 @@ import { getConfig } from '@/config/configuration';
     },
   ],
   // 导出 token + 图片处理 + 上传拦截器。后两个是 class，直接当 token 导出即可注入。
-  exports: [STORAGE_SERVICE, ImageProcessorService],
+  exports: [STORAGE_SERVICE, ImageProcessorService, CoverUploadInterceptor],
 })
 export class StorageModule {}

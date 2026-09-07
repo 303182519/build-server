@@ -8,6 +8,8 @@ import {
   Body,
   Patch,
   UploadedFile,
+  UseInterceptors,
+  HttpCode,
 } from '@nestjs/common';
 import type { User } from '@prisma/client';
 import {
@@ -40,7 +42,12 @@ import {
   PostExceptionCode,
   PostExceptionMap,
 } from '@/common/exceptions/post.exception';
+import {
+  StorageExceptionCode,
+  StorageExceptionMap,
+} from '@/common/exceptions/storage.exception';
 import { ParseSnowflakePipe } from '@/common/pipes/parse-snowflake.pipe';
+import { CoverUploadInterceptor } from '@/shared/storage/cover-upload.interceptor';
 
 // 路径参数 :id 的统一文档
 const idParam = ApiParam({
@@ -180,11 +187,21 @@ export class PostsController {
   })
   @idParam
   @ApiEnvelope(PostResponseDto)
-  @ApiErrorEnvelope(400, '未上传文件 / 非图片', 'INVALID_FILE')
-  @ApiErrorEnvelope(403, '不是作者也不是 admin', 'FORBIDDEN')
-  @ApiErrorEnvelope(404, '文章不存在', 'POST_NOT_FOUND')
-  @ApiErrorEnvelope(413, '文件过大', 'UPLOAD_TOO_LARGE')
-  @ApiErrorEnvelope(415, '仅支持图片', 'UNSUPPORTED_MEDIA_TYPE')
+  @ApiExceptionEnvelope(StorageExceptionMap, StorageExceptionCode.INVALID_FILE)
+  @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.POST_FORBIDDEN)
+  @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.POST_NOT_FOUND)
+  @ApiExceptionEnvelope(
+    StorageExceptionMap,
+    StorageExceptionCode.UPLOAD_TOO_LARGE,
+  )
+  @ApiExceptionEnvelope(
+    StorageExceptionMap,
+    StorageExceptionCode.UNSUPPORTED_MEDIA_TYPE,
+  )
+  @ApiExceptionEnvelope(
+    StorageExceptionMap,
+    StorageExceptionCode.STORAGE_FAILED,
+  )
   uploadCover(
     @Param('id', ParseSnowflakePipe) id: bigint,
     @UploadedFile() file: Express.Multer.File,

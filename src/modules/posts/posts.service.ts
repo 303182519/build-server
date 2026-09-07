@@ -22,7 +22,11 @@ import { CreatePostDto } from './dto/create-post.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
 import { ImageProcessorService } from '@/shared/storage/image-processor.service';
 import { STORAGE_SERVICE } from '@/shared/storage/storage.constants';
-import type { StorageService } from '@/shared/storage/storage.service';
+import type {
+  StorageService,
+  StoredFile,
+} from '@/shared/storage/storage.service';
+import { StorageExceptionCode } from '@/common/exceptions/storage.exception';
 
 @Injectable()
 export class PostsService {
@@ -240,11 +244,7 @@ export class PostsService {
     user: User,
   ): Promise<Post> {
     if (!file) {
-      throw new BusinessException(
-        ErrorCodes.INVALID_FILE,
-        '未上传文件（multipart 字段名需为 file）',
-        HttpStatus.BAD_REQUEST,
-      );
+      throw new ErrorException(StorageExceptionCode.INVALID_FILE);
     }
     // 404 优先于 403；且要在做昂贵的图像处理 / 存储写入【之前】先确认存在 + 有权限。
     const post = await this.loadById(id);
@@ -252,11 +252,7 @@ export class PostsService {
 
     if (!this.storage || !this.imageProcessor) {
       // 单测里裸构造时可能为空；运行时 StorageModule（全局）总会注入。
-      throw new BusinessException(
-        ErrorCodes.STORAGE_FAILED,
-        '存储服务未配置',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      throw new ErrorException(StorageExceptionCode.STORAGE_FAILED);
     }
 
     // 1) sharp 核验「真是图」+ 归一化（缩放 / 转 webp）。解析不出像素 → INVALID_FILE。
@@ -268,7 +264,7 @@ export class PostsService {
     const key = `covers/${id}/${randomUUID()}.${processed.ext}`;
 
     // 3) 落存储。失败 → STORAGE_FAILED（不把对象存储的内部错误透给客户端）。
-    let stored;
+    let stored: StoredFile;
     try {
       stored = await this.storage.save({
         buffer: processed.buffer,
@@ -277,11 +273,7 @@ export class PostsService {
       });
     } catch (e) {
       this.logger.error(`封面存储失败：${(e as Error).message}`);
-      throw new BusinessException(
-        ErrorCodes.STORAGE_FAILED,
-        '文件存储失败，请稍后重试',
-        HttpStatus.BAD_GATEWAY,
-      );
+      throw new ErrorException(StorageExceptionCode.STORAGE_FAILED);
     }
 
     // 4) 把对外 URL 写进 meta.coverImage（专用路径：不 bump version、不写修订）。
