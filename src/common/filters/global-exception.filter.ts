@@ -154,10 +154,25 @@ export class GlobalExceptionsFilter implements ExceptionFilter {
         responseBody.bizCode = fallbackBizCode(responseBody.code);
       }
     } else if (exception instanceof Error) {
+      // body-parser / http-errors 抛出的错误（如 entity.too.large、unsupported charset）
+      // 不是 HttpException，但携带了合法的 status / statusCode（4xx）
+      // 必须优先使用，否则这些客户端错误会全部落到 500，污染 5xx 告警
+      const httpStatus =
+        (exception as { status?: number }).status ??
+        (exception as { statusCode?: number }).statusCode;
+      // 仅接受合法的 4xx 客户端错误状态码（400-499）；
+      // 5xx 不应来自 body-parser，回退到 500 兜底
+      if (
+        typeof httpStatus === 'number' &&
+        httpStatus >= 400 &&
+        httpStatus < 500
+      ) {
+        responseBody.code = httpStatus;
+      }
       if (!IsProduction) {
         responseBody.message = exception.message;
       }
-      responseBody.bizCode = BizCode.INTERNAL_ERROR;
+      responseBody.bizCode = fallbackBizCode(responseBody.code);
     }
 
     // 记录错误日志
