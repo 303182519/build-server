@@ -7,9 +7,17 @@ import {
   Delete,
   Body,
   Patch,
+  UploadedFile,
 } from '@nestjs/common';
 import type { User } from '@prisma/client';
-import { ApiOperation, ApiExcludeEndpoint, ApiParam } from '@nestjs/swagger';
+import {
+  ApiOperation,
+  ApiExcludeEndpoint,
+  ApiParam,
+  ApiConsumes,
+  ApiBody,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import {
   ApiEnvelope,
   ApiErrorEnvelope,
@@ -154,5 +162,34 @@ export class PostsController {
   @ApiExceptionEnvelope(PostExceptionMap, PostExceptionCode.POST_NOT_FOUND)
   remove(@Param('id', ParseSnowflakePipe) id: bigint, @UserInfo() user: User) {
     return this.posts.remove(id, user);
+  }
+
+  // Day 39：上传封面图。multipart/form-data，字段名 file；multer 在 CoverUploadInterceptor 里解析。
+  // @UseInterceptors 的拦截器经 DI 实例化——它注入 ConfigService 拿到配置驱动的 limits / fileFilter。
+  // ★ @HttpCode(200)：这是【更新】已有文章的封面，不是创建资源，所以不该用 @Post 默认的 201。
+  @Post(':id/cover')
+  @UseInterceptors(CoverUploadInterceptor)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '上传封面图（需登录 + 作者本人或 admin）' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @idParam
+  @ApiEnvelope(PostResponseDto)
+  @ApiErrorEnvelope(400, '未上传文件 / 非图片', 'INVALID_FILE')
+  @ApiErrorEnvelope(403, '不是作者也不是 admin', 'FORBIDDEN')
+  @ApiErrorEnvelope(404, '文章不存在', 'POST_NOT_FOUND')
+  @ApiErrorEnvelope(413, '文件过大', 'UPLOAD_TOO_LARGE')
+  @ApiErrorEnvelope(415, '仅支持图片', 'UNSUPPORTED_MEDIA_TYPE')
+  uploadCover(
+    @Param('id', ParseSnowflakePipe) id: bigint,
+    @UploadedFile() file: Express.Multer.File,
+    @UserInfo() user: User,
+  ) {
+    return this.posts.uploadCover(id.toString(), file, user);
   }
 }

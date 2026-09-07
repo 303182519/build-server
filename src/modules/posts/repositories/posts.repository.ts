@@ -1,4 +1,8 @@
-import type { Post, PostWriteData, PostRevision } from '../entities/post.entity';
+import type {
+  Post,
+  PostWriteData,
+  PostRevision,
+} from '../entities/post.entity';
 import type { QueryPostDto } from '../dto/query-post.dto';
 import type { CursorPayload } from '../cursor';
 
@@ -37,10 +41,15 @@ export interface PostsRepository {
 
   remove(id: bigint): Promise<boolean>;
 
-  // Day 29 —— 列出某篇文章的修订历史（新 → 旧）。
+  // 设置 / 清除封面图 URL。只改 meta.coverImage：不 bump version、不写修订
+  // （封面不是内容变更，不该出现在修订历史里）。coverUrl=null 表示清除。
+  // 返回 null = 记录不存在。
+  setCoverImage(postId: string, coverUrl: string | null): Promise<Post | null>;
+
+  // 列出某篇文章的修订历史（新 → 旧）。
   listRevisions(postId: bigint): Promise<PostRevision[]>;
 
-  // Day 29 —— 更新。expectedVersion 提供时做乐观锁检查（版本不匹配抛 VERSION_CONFLICT）；
+  // 更新。expectedVersion 提供时做乐观锁检查（版本不匹配抛 VERSION_CONFLICT）；
   // 无论是否提供，成功更新都自增 version，并在同一事务里写一条修订快照。
   // 返回 null = 记录不存在。
   update(

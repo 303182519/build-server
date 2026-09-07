@@ -1,6 +1,7 @@
 import type { User } from '@prisma/client';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { randomUUID } from 'node:crypto';
 import type { Post } from './entities/post.entity';
 import { QueryPostDto } from './dto/query-post.dto';
 import { setCacheState } from '@/common/request-context';
@@ -19,6 +20,9 @@ import { decodeCursor } from './cursor';
 import { TrendingService } from './trending.service';
 import { CreatePostDto } from './dto/create-post.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
+import { ImageProcessorService } from '@/shared/storage/image-processor.service';
+import { STORAGE_SERVICE } from '@/shared/storage/storage.constants';
+import type { StorageService } from '@/shared/storage/storage.service';
 
 @Injectable()
 export class PostsService {
@@ -49,6 +53,11 @@ export class PostsService {
     private readonly configService: ConfigService,
 
     @Optional() private readonly trendingService?: TrendingService,
+    // 存储 + 图片处理。同样 @Optional()，保持单元测试可裸构造；运行时由全局 StorageModule 注入。
+    @Optional()
+    @Inject(STORAGE_SERVICE)
+    private readonly storage?: StorageService,
+    @Optional() private readonly imageProcessor?: ImageProcessorService,
   ) {}
 
   // ── 读路径：Cache-Aside（旁路缓存） ────────────────────────────────────
@@ -220,6 +229,86 @@ export class PostsService {
     // 从排行榜摘掉，免得榜上挂着已删文章。
     await this.trendingService?.drop(id.toString());
     return { deleted: true, id };
+  }
+
+  // ── 封面图上传 ────────────────────────────────────────────────
+  // 流水线：multer 已把单文件缓冲进 file.buffer → sharp 核验+归一化 → 落存储 → 写 meta → 清旧图。
+  // 每一步都对应一类真实问题，注释里点明。
+  async uploadCover(
+    id: string,
+    file: Express.Multer.File | undefined,
+    user: User,
+  ): Promise<Post> {
+    if (!file) {
+      throw new BusinessException(
+        ErrorCodes.INVALID_FILE,
+        '未上传文件（multipart 字段名需为 file）',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    // 404 优先于 403；且要在做昂贵的图像处理 / 存储写入【之前】先确认存在 + 有权限。
+    const post = await this.loadById(id);
+    this.assertCanModify(post, user);
+
+    if (!this.storage || !this.imageProcessor) {
+      // 单测里裸构造时可能为空；运行时 StorageModule（全局）总会注入。
+      throw new BusinessException(
+        ErrorCodes.STORAGE_FAILED,
+        '存储服务未配置',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+
+    // 1) sharp 核验「真是图」+ 归一化（缩放 / 转 webp）。解析不出像素 → INVALID_FILE。
+    //    这一步把「信任浏览器报的 Content-Type」换成「信任文件真实字节」——纵深防御的核心。
+    const processed = await this.imageProcessor.processCover(file.buffer);
+
+    // 2) 安全 key：postId + 随机 uuid + 处理后扩展名。绝不采用用户原始文件名——
+    //    既防目录穿越、防覆盖、也防文件名里的敏感信息（用户名 / 路径）泄露。
+    const key = `covers/${id}/${randomUUID()}.${processed.ext}`;
+
+    // 3) 落存储。失败 → STORAGE_FAILED（不把对象存储的内部错误透给客户端）。
+    let stored;
+    try {
+      stored = await this.storage.save({
+        buffer: processed.buffer,
+        key,
+        contentType: processed.contentType,
+      });
+    } catch (e) {
+      this.logger.error(`封面存储失败：${(e as Error).message}`);
+      throw new BusinessException(
+        ErrorCodes.STORAGE_FAILED,
+        '文件存储失败，请稍后重试',
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+
+    // 4) 把对外 URL 写进 meta.coverImage（专用路径：不 bump version、不写修订）。
+    const updated = await this.repo.setCoverImage(id, stored.url);
+    if (!updated) throw new ErrorException(ErrorExceptionCode.POST_NOT_FOUND);
+
+    // 5) 失效单篇缓存——cover 是文章的一部分，旧缓存里的 meta 已过期。
+    await this.invalidate(id);
+
+    // 6) best-effort 清旧封面（避免孤儿对象长期占存储 / 烧钱）。删失败不影响本次上传——记日志即可。
+    const oldUrl = post.meta?.coverImage;
+    if (oldUrl && oldUrl !== stored.url) {
+      void this.tryDeleteByUrl(oldUrl);
+    }
+    return updated;
+  }
+
+  // 把对外 URL 反推成 key 再删；任何失败只记日志，绝不抛回主流程（孤儿清理是「锦上添花」）。
+  private async tryDeleteByUrl(url: string): Promise<void> {
+    try {
+      const key = this.storage?.keyFromPublicUrl(url);
+      if (key) await this.storage?.delete(key);
+    } catch (e) {
+      this.logger.warn(
+        `清理旧封面失败（已忽略）${url}：${(e as Error).message}`,
+      );
+    }
   }
 
   // 给 /posts/debug/boom 用：故意抛非 HttpException，验证全局兜底脱敏
