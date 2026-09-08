@@ -86,20 +86,6 @@ COPY --from=deps /app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/nod
 # 编译产物：纯 JS，运行时不需要 typescript、也不需要 ts 源码。
 COPY --from=build /app/dist ./dist
 
-# 数据库迁移文件：prisma migrate deploy 在容器启动时执行，需要 schema + migrations。
-# schema.prisma 描述当前数据模型，migrations/ 包含所有增量迁移 SQL。
-# prisma CLI 已在 dependencies 中（pnpm install --prod 已安装），无需额外处理。
-COPY prisma ./prisma
-# 容器启动入口脚本：启动应用前先执行 prisma migrate deploy。
-# sed 去除 Windows CRLF 行尾——开发机是 Windows，git 可能把 LF 转成 CRLF，
-# Alpine 的 /bin/sh 遇到 \r 会报 not found 或静默失败。
-COPY docker-entrypoint.sh ./
-RUN chmod +x docker-entrypoint.sh && sed -i 's/\r$//' docker-entrypoint.sh
-# prisma migrate deploy 运行时需要向 @prisma+engines 目录写入引擎二进制，
-# 而 node_modules 在 COPY 阶段以 root 创建，app 用户无写权限 → 迁移失败。
-# 把 node_modules 所有权交给 app，让运行时的 prisma CLI 能正常写入。
-RUN chown -R app:app node_modules
-
 # 本地存储后端写封面图的目录。mkdir 默认归 root，非 root 的 app 写不进去 → 上传必 500。
 # 建好就 chown 给 app。S3 后端用不到，留个空目录也不碍事。
 RUN mkdir -p uploads && chown -R app:app uploads
@@ -118,5 +104,5 @@ EXPOSE 3000
 # 关连接池、触发 onModuleDestroy），但得先让信号正确送达。tini 负责接信号、转发、
 # 回收僵尸，Node 专注业务——于是「docker stop」= 优雅退出，而非 SIGKILL 一刀切。
 # docker-entrypoint.sh 在启动应用前执行数据库迁移（幂等，多实例并发安全）。
-ENTRYPOINT ["/sbin/tini", "--", "./docker-entrypoint.sh"]
+ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "dist/main"]
