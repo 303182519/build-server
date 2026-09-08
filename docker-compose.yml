@@ -84,6 +84,22 @@ services:
         condition: service_healthy
     restart: "no" # 一次性 job：跑完即退，不重启
 
+  # ── seed：一次性种子数据 job ─────────────────────────────────────────────
+  # 启动顺序：迁移完成 → 跑种子数据（权限/角色/管理员）→ 退出。
+  # 幂等设计：重复 up seed 不会报错或产生重复数据。
+  # 用法：docker compose up seed
+  seed:
+    build:
+      context: .
+      target: deps
+    command: ["npx", "ts-node", "--compiler-options", "{\"module\":\"CommonJS\"}", "prisma/seed.ts"]
+    environment:
+      DATABASE_URL: mysql://blog:${MYSQL_PASSWORD}@mysql:3306/blog?connection_limit=10
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no" # 一次性 job：跑完即退，不重启
+
   # ── api：应用本体 ────────────────────────────────────────────────────────
   api:
     build:

@@ -6,6 +6,9 @@
   "private": true,
   "license": "UNLICENSED",
   "packageManager": "pnpm@10.34.0",
+  "prisma": {
+    "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
+  },
   "engines": {
     "node": ">=20.19.5"
   },
@@ -14,6 +17,7 @@
     "db:pull": "prisma db pull",
     "db:dev": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
+    "db:seed": "prisma db seed",
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
