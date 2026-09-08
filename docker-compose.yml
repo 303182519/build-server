@@ -89,6 +89,7 @@ services:
   # 幂等设计：重复 up seed 不会报错或产生重复数据。
   # 用法：docker compose up seed
   seed:
+    profiles: ["tools"] # 新增这一行
     build:
       context: .
       target: seed
