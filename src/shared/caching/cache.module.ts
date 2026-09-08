@@ -132,6 +132,7 @@ const buildRedisUrl = (redis: {
     RedisLockService,
     SortedSetCacheService,
     REDIS_CLIENT,
+    CacheHealthIndicator,
   ],
 })
 export class RedisCacheModule

@@ -48,15 +48,14 @@ import { HttpLoggerMiddleware } from './middleware/http-logger.middleware';
 })
 export class CommonModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-
     // 请求上下文（CLS）必须【最先】挂——它在最外层 .run(store, next) 开上下文，
     // 后续所有中间件 / controller / service / 拦截器都在这个 store 里，X-Cache 状态才传得出去。
     consumer.apply(RequestContextMiddleware).forRoutes('*');
 
     consumer
       .apply(cookieParser(), RequestIdMiddleware, HttpLoggerMiddleware)
-      // /health 不进访问日志：会被探针高频调用，日志量没价值
-      .exclude({ path: 'health', method: RequestMethod.GET })
+      // /api/health 不进访问日志：会被探针高频调用，日志量没价值
+      .exclude({ path: 'api/health', method: RequestMethod.GET })
       .forRoutes('*');
   }
 }
