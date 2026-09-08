@@ -32,6 +32,16 @@ RUN pnpm exec prisma generate
 
 
 # ===========================================
+# 种子数据阶段（一次性 job，幂等）
+# ===========================================
+# 复用 deps 的 node_modules + Prisma client，补源码让 ts-node 能跑 seed.ts。
+# 仅 seed job 使用，不进最终镜像。
+FROM deps AS seed
+COPY tsconfig.json ./
+COPY src ./src
+
+
+# ===========================================
 # 构建阶段
 # ===========================================
 

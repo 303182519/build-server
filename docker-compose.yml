@@ -91,8 +91,8 @@ services:
   seed:
     build:
       context: .
-      target: deps
-    command: ["npx", "ts-node", "--compiler-options", "{\"module\":\"CommonJS\"}", "prisma/seed.ts"]
+      target: seed
+    command: ["npx", "ts-node", "-r", "tsconfig-paths/register", "--compiler-options", "{\"module\":\"CommonJS\"}", "prisma/seed.ts"]
     environment:
       DATABASE_URL: mysql://blog:${MYSQL_PASSWORD}@mysql:3306/blog?connection_limit=10
     depends_on:
