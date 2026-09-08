@@ -31,3 +31,12 @@ coverage
 docker-compose*.yml
 Dockerfile
 .dockerignore
+
+# ── AI 工具链 / IDE / 文档 ──────────────────────────────────────────────
+
+.agents/
+.claude/
+.qoder/
+.rules/
+scripts/
+docs/

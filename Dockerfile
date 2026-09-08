@@ -2,7 +2,7 @@
 # 依赖安装阶段- alpine是轻量级的linux发行版；slim是debian的轻量级版本（省事）
 # ===========================================
 
-FROM node:22-alpine AS base
+FROM node:22-alpine AS deps
 
 # alpine + Prisma 的经典坑：query engine 是按 glibc + openssl 编译的 .node 二进制，
 # 在 musl 上要么报 "could not load library" 要么直接段错误。
@@ -49,7 +49,7 @@ RUN pnpm build
 
 # 从全新的 node:20-alpine 起，只搬运行时必需的东西进来。最终镜像不含 typescript、
 # 源码、devDeps——任何「只是构建时才需要」的东西都被挡在这段之外。
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 
 RUN apk add --no-cache openssl libc6-compat tini
 
@@ -90,6 +90,11 @@ COPY --from=build /app/dist ./dist
 # 本地存储后端写封面图的目录。mkdir 默认归 root，非 root 的 app 写不进去 → 上传必 500。
 # 建好就 chown 给 app。S3 后端用不到，留个空目录也不碍事。
 RUN mkdir -p uploads && chown -R app:app uploads
+
+# 进程级健康检查：/health 不查 DB、已 @SkipThrottle（Day 35），天生适合被高频探针打。
+# 3 次连续失败才判 unhealthy，给网络抖动留余量。HEALTHCHECK 不走 ENTRYPOINT，独立执行。
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget -q -O /dev/null http://localhost:${PORT:-3000}/health || exit 1
 
 
 USER app
