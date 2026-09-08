@@ -98,6 +98,11 @@ COPY prisma ./prisma
 COPY docker-entrypoint.sh ./
 RUN chmod +x docker-entrypoint.sh && sed -i 's/\r$//' docker-entrypoint.sh
 
+# prisma migrate deploy 运行时需要向 @prisma+engines 目录写入引擎二进制，
+# 而 node_modules 在 COPY 阶段以 root 创建，app 用户无写权限 → 迁移失败。
+# 把 node_modules 所有权交给 app，让运行时的 prisma CLI 能正常写入。
+RUN chown -R app:app node_modules
+
 # 本地存储后端写封面图的目录。mkdir 默认归 root，非 root 的 app 写不进去 → 上传必 500。
 # 建好就 chown 给 app。S3 后端用不到，留个空目录也不碍事。
 RUN mkdir -p uploads && chown -R app:app uploads
