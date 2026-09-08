@@ -166,17 +166,24 @@ export class RedisCacheModule
   }
 
   async onModuleDestroy(): Promise<void> {
-    if (!this.redisClient || this.redisClient.isOpen === false) {
+    if (!this.redisClient) {
       return;
     }
 
-    try {
-      await this.redisClient.quit();
-      this.logger.log('Redis 连接已优雅关闭');
-    } catch (err) {
-      this.logger.warn(
-        `Redis 关闭异常: ${err instanceof Error ? err.message : String(err)}`,
-      );
+    // @nestjs/cache-manager 的 onModuleDestroy 会先于本模块执行，
+    // 通过 cacheManager.store.disconnect() 关闭底层 ioredis client。
+    // 因此到达这里时 isOpen 通常已为 false，属于正常行为。
+    if (this.redisClient.isOpen) {
+      try {
+        await this.redisClient.quit();
+        this.logger.log('Redis 连接已优雅关闭');
+      } catch (err) {
+        this.logger.warn(
+          `Redis 关闭异常: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    } else {
+      this.logger.log('Redis 连接已关闭 (由 cache-manager 生命周期管理)');
     }
   }
 }
