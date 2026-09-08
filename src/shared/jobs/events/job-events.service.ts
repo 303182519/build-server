@@ -86,6 +86,20 @@ export class JobEventsService implements OnModuleDestroy {
     if (this.subClient.options)
       this.subClient.options.disableOfflineQueue = true;
 
+    // 必须为 duplicated client 挂 error handler，
+    // 否则 @redis/client 断连时 emit 的 'error' 事件无人监听，
+    // EventEmitter 默认 throw 会拖崩进程
+    this.pubClient.on('error', (err: unknown) => {
+      this.logger.warn(
+        `Redis pub client error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+    this.subClient.on('error', (err: unknown) => {
+      this.logger.warn(
+        `Redis sub client error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+
     await Promise.all([this.pubClient.connect(), this.subClient.connect()]);
 
     // subscriber 端监听频道消息，反序列化后推入本地 Subject

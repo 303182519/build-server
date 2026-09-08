@@ -84,6 +84,16 @@ const buildRedisUrl = (redis: {
           );
         });
 
+        // 底层 @redis/client 自身也会独立 emit 'error'（如 SocketClosedUnexpectedly），
+        // KeyvRedis adapter 的 error 监听无法兜住所有场景；
+        // 必须在原始 client 上也挂 error handler，否则 EventEmitter 默认 throw 会拖崩进程
+        redisClient.on('error', (err: unknown) => {
+          Logger.warn(
+            `Redis underlying client error: ${err instanceof Error ? err.message : String(err)}`,
+            'RedisCacheModule',
+          );
+        });
+
         return {
           // Keyv 构造时会强制把 store.namespace 覆盖成自己的 namespace（默认 'keyv'），
           // 所以必须显式传 namespace，否则 KeyvRedis 的 namespace 会被冲成 'keyv'
