@@ -28,7 +28,6 @@ RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
 # 必须在【容器内】generate：Prisma 会下载匹配当前内核的 query engine（linux-musl-*）。
-# 要是在 mac 上 generate 再把 node_modules 拷进镜像，引擎是 darwin 的，进容器直接报错。
 RUN pnpm exec prisma generate
 
 
