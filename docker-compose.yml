@@ -1,42 +1,51 @@
 # ===========================================================================
-# blog 全栈编排 —— 一个 `docker compose up -d` 把 api + PostgreSQL + Redis
-# 连同「迁移 job」一起拉起来，并保证【启动顺序】：DB 健康 → 跑迁移 → api 就绪后才接流量。
+# build-server 全栈编排
+# 一个 `docker compose up -d` 拉起 api + MySQL + Redis + 迁移 job。
+# 启动顺序：MySQL 健康 → 跑迁移 → api 就绪后才接流量。
 # ============================================================================
 
-# 顶层统一声明 compose 规范版本（v2）。现代 Docker Desktop / compose v2 默认即可。
-name: blog-stack
+name: build-server-stack
 
 services:
-  # ── PostgreSQL：真相源 ──────────────────────────────────────────────────
-  # 故意【不映射 host 端口】：DB 只给同网络的 api / migrate 访问，不对宿主机暴露。
-  # 生产里 DB 更不该裸露在主机端口上——少一个攻击面。要 psql 进去看数据：
-  #   docker compose exec postgres psql -U blog -d blog
-  postgres:
-    image: postgres:16-alpine
+  # ── MySQL：持久化真相源 ──────────────────────────────────────────────────
+  # 不映射 host 端口：DB 只给同网络的 api / migrate 访问，不对宿主机暴露。
+  # 要 mysql 进去看数据：
+  #   docker compose exec mysql mysql -u root -p blog
+  mysql:
+    image: mysql:8.0
     restart: unless-stopped
     environment:
-      POSTGRES_USER: blog
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-blog_dev_pwd}
-      POSTGRES_DB: blog
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?在 .env 里设置 MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: blog
+      MYSQL_USER: blog
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?在 .env 里设置 MYSQL_PASSWORD}
       TZ: Asia/Shanghai
-      PGTZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+      - --innodb-buffer-pool-size=128M
+      - --max-connections=200
+      - --slow-query-log=1
+      - --slow-query-log-file=/var/lib/mysql/slow.log
+      - --long-query-time=2
     volumes:
-      - pg-data:/var/lib/postgresql/data
-    # 健康检查是整个【启动顺序】的地基：api 和 migrate 都 depends_on 它 service_healthy。
-    # pg_isready 是 postgres 自带的探活命令，查「数据库进程起来了、能接受连接」。
+      - mysql-data:/var/lib/mysql
+    # 健康检查是整个启动顺序的地基：api 和 migrate 都 depends_on 它 service_healthy。
+    # mysqladmin ping 查「数据库进程起来了、能接受连接」。
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U blog -d blog"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$${MYSQL_ROOT_PASSWORD}"]
       interval: 5s
       timeout: 3s
       retries: 10
-      start_period: 5s
+      start_period: 10s # MySQL 冷启动比 PostgreSQL 慢，留够初始化时间
 
-  # ── Redis：缓存 / 队列 ──────────────────────────────────────────────────
+  # ── Redis：缓存 / 任务队列 ──────────────────────────────────────────────
   # 同样不映射 host 端口，仅内网可达。
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "allkeys-lru"]
     volumes:
       - redis-data:/data
     healthcheck:
@@ -47,28 +56,27 @@ services:
       start_period: 3s
 
   # ── migrate：一次性迁移 job ──────────────────────────────────────────────
-  # 启动顺序里的「夹层」：等 DB 健康 → 跑 prisma migrate deploy → 退出。
+  # 启动顺序里的夹层：等 MySQL 健康 → 跑 prisma migrate deploy → 退出。
   # api depends_on 它 service_completed_successfully——迁移没成功跑完，api 不起。
   #
   # 为什么单独起一个 job、不在 api 启动时顺带 migrate：
-  #   1. 横向扩容时 api 有 N 个副本，谁都不该负责「改库结构」——否则 N 个副本抢着
-  #      migrate 会互相踩。迁移是【一次性、需要串行】的动作，由独立 job 独占最稳。
-  #   2. migrate 失败时，job 退出非 0，api 因依赖条件不满足而【不启动】——
+  #   1. 横向扩容时 api 有 N 个副本，谁都不该负责改库结构——否则 N 个副本抢着
+  #      migrate 会互相踩。迁移是一次性、需要串行的动作，由独立 job 独占最稳。
+  #   2. migrate 失败时，job 退出非 0，api 因依赖条件不满足而不启动——
   #      库结构没就绪就别让 api 接流量，fail closed。
   migrate:
     build:
       context: .
-      # 复用 Dockerfile 的【deps 段】：那里装了【全量】依赖（含 prisma CLI）+
+      # 复用 Dockerfile 的 deps 段：那里装了全量依赖（含 prisma CLI）+
       # COPY 了 prisma/（schema + migrations + migration_lock.toml）。
-      # runner 段用 --prod 装依赖、没有 prisma CLI，跑不了 migrate。拿 deps 段当这个
-      # 一次性 job 的镜像，最省也最对（migrate 只需要 CLI + 迁移文件，不需要编译产物）。
+      # runner 段用 --prod 装依赖、没有 prisma CLI，跑不了 migrate。
       target: deps
-    # migrate deploy 对已应用的迁移是幂等的——重复 `compose up` 只补未应用的，不重复建表。
+    # migrate deploy 对已应用的迁移是幂等的——重复 compose up 只补未应用的，不重复建表。
     command: ["pnpm", "exec", "prisma", "migrate", "deploy"]
     environment:
-      DATABASE_URL: postgresql://blog:${POSTGRES_PASSWORD:-blog_dev_pwd}@postgres:5432/blog?schema=blog_api
+      DATABASE_URL: mysql://blog:${MYSQL_PASSWORD}@mysql:3306/blog?connection_limit=10
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
     restart: "no" # 一次性 job：跑完即退，不重启
 
@@ -76,56 +84,75 @@ services:
   api:
     build:
       context: .
-      # 不指定 target → 用 Dockerfile 最后一段（runner）：生产级最小镜像（无编译器/源码/devDeps）。
+      # 不指定 target → 用 Dockerfile 最后一段（runner）：生产级最小镜像。
     restart: unless-stopped
     ports:
-      # 只有 api 对宿主机暴露端口——外部要访问 API。DB / Redis 都不暴露（见上）。
+      # 只有 api 对宿主机暴露端口——外部要访问 API。DB / Redis 都不暴露。
       - "${API_PORT:-3000}:3000"
     environment:
-      NODE_ENV: production # 镜像里也硬编码了 production；显式再写一遍，单一可见
+      NODE_ENV: production
       PORT: 3000
-      # ★ 依赖地址用【服务名】，不是 localhost：容器里的 localhost 是容器自己，
+      # ★ 依赖地址用服务名，不是 localhost：容器里的 localhost 是容器自己，
       #   连不到别的服务。compose 给同一份编排里的服务自动建网络、自动做服务名 DNS。
-      DATABASE_URL: postgresql://blog:${POSTGRES_PASSWORD:-blog_dev_pwd}@postgres:5432/blog?schema=blog_api
+      DATABASE_URL: mysql://blog:${MYSQL_PASSWORD}@mysql:3306/blog?connection_limit=10
       REDIS_URL: redis://redis:6379
-      # JWT 密钥必须由部署者提供。镜像硬编码 NODE_ENV=production，而 config.validation.ts
-      # 在 production 下会拒绝 .env.example 的示例 secret——没设或设占位值就启动即崩。
-      # ${VAR:?msg} 让 compose 在变量缺失时直接报错退出（fail-fast），而不是偷偷用空值。
-      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?在 solutions/blog/.env 里设置 JWT_ACCESS_SECRET（≥32 字符，见 .env.example）}
-      # 本地存储后端：封面图落容器内 /app/uploads。S3 后端见 .env.example，需另配 S3_*。
-      STORAGE_BACKEND: local
-      STORAGE_LOCAL_DIR: uploads
-      STORAGE_PUBLIC_PREFIX: /uploads
+      # JWT 密钥必须由部署者提供。
+      # ${VAR:?msg} 让 compose 在变量缺失时直接报错退出（fail-fast）。
+      JWT_SECRET: ${JWT_SECRET:?在 .env 里设置 JWT_SECRET（≥32 字符，见 .env.example）}
+      # 初始管理员账户
+      DEFAULT_ADMIN_USERNAME: ${DEFAULT_ADMIN_USERNAME:-admin}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:?在 .env 里设置 DEFAULT_ADMIN_PASSWORD}
+      # 文件存储：local（默认）| s3
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+      STORAGE_LOCAL_DIR: ${STORAGE_LOCAL_DIR:-uploads}
+      STORAGE_PUBLIC_PREFIX: ${STORAGE_PUBLIC_PREFIX:-/uploads}
+      # S3 兼容对象存储（仅 STORAGE_BACKEND=s3 时需要，透传 .env 配置）
+      S3_REGION: ${S3_REGION:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-}
+      # 文件上传
+      UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-5242880}
+      UPLOAD_COVER_MAX_WIDTH: ${UPLOAD_COVER_MAX_WIDTH:-1600}
+      UPLOAD_COVER_FORMAT: ${UPLOAD_COVER_FORMAT:-webp}
+      # Bull Board 任务监控面板
+      BULL_BOARD_ENABLED: ${BULL_BOARD_ENABLED:-false}
+      BULL_BOARD_PATH: ${BULL_BOARD_PATH:-/admin/queues}
+      BULL_BOARD_AUTH_TYPE: ${BULL_BOARD_AUTH_TYPE:-jwt}
+      BULL_BOARD_READ_ONLY: ${BULL_BOARD_READ_ONLY:-false}
+      # Redis 隔离前缀
+      REDIS_KEY_PREFIX: ${REDIS_KEY_PREFIX:-build-server}
     volumes:
-      # 封面图写到命名卷，容器重建不丢图。目录在镜像里已 chown 给非 root 的 app（Day 41）。
+      # 封面图写到命名卷，容器重建不丢图。目录在镜像里已 chown 给非 root 的 app。
       - uploads:/app/uploads
     depends_on:
-      # 启动顺序的三道闸，逐级放宽「能不能起」：
-      #   1. DB 健康（连接就绪）
-      #   2. Redis 健康（缓存层就绪）
+      # 启动顺序的三道闸：
+      #   1. MySQL 健康（连接就绪）
+      #   2. Redis 健康（缓存层 / 任务队列就绪）
       #   3. migrate 成功完成（库结构就绪）—— 三者都满足 api 才起。
-      postgres:
+      mysql:
         condition: service_healthy
       redis:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      # ★ 覆盖镜像内置的探针：镜像里的 HEALTHCHECK 打 /health（存活，进程级），
-      #   对编排器「能不能导流量」这个问题答非所问——进程活着不代表 DB 连得上。
-      #   这里改成打 /health/ready（就绪，查 DB + Redis）：任一不可用返回 503，
-      #   探针判 unhealthy，compose / 编排器就不会把流量往这导。
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/health/ready"]
+      # 覆盖镜像内置的探针：镜像里的 HEALTHCHECK 打 /api/health（查 DB + Redis 连通性），
+      # compose 里显式再声明一次，确保探针参数与编排需求一致。
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/api/health"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 25s # Nest 冷启动 + Prisma 连库 + terminus 首检，留够缓冲再开始判
 
 # ── 持久化卷 ───────────────────────────────────────────────────────────────
-# pg-data：DB 数据。重建容器不丢库；`docker compose down -v` 才删。
+# mysql-data：DB 数据。重建容器不丢库；`docker compose down -v` 才删。
 # uploads：本地存储的封面图。
-# redis-data：redis 关了持久化，这个卷基本空着，留作将来开 appendonly 时用。
+# redis-data：Redis AOF 持久化数据。
 volumes:
-  pg-data:
+  mysql-data:
   uploads:
   redis-data:
