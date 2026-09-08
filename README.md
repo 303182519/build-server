@@ -48,7 +48,7 @@ docker compose logs -f migrate api
 
 ### 5. 确认健康检查通过
 docker compose ps
-# api 状态显示 (healthy) 代表成功
+api 状态显示 (healthy) 代表成功
 
 ### 6. 如需执行种子数据（新增角色/初始化数据才跑，日常升级不用）
-# docker compose up seed
+docker compose up seed
