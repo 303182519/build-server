@@ -32,9 +32,13 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
     # 健康检查是整个启动顺序的地基：api 和 migrate 都 depends_on 它 service_healthy。
-    # mysqladmin ping 查「数据库进程起来了、能接受连接」。
+    # ★ 用 MySQL 原生 TCP 端口探测，而非 mysqladmin ping：
+    #   mysqladmin ping 只检测 mysqld 进程是否存活（通过 socket 响应），
+    #   但 MySQL 初始化阶段（建库/建用户）进程已活着、端口却还没就绪，
+    #   导致 depends_on 的 migrate/api 过早启动、连接被拒。
+    #   /dev/tcp/localhost/3306 直接探测 TCP 监听，确保端口真正可接受连接。
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$${MYSQL_ROOT_PASSWORD}"]
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/3306"]
       interval: 5s
       timeout: 3s
       retries: 10
