@@ -91,13 +91,11 @@ COPY --from=build /app/dist ./dist
 # schema.prisma 描述当前数据模型，migrations/ 包含所有增量迁移 SQL。
 # prisma CLI 已在 dependencies 中（pnpm install --prod 已安装），无需额外处理。
 COPY prisma ./prisma
-
 # 容器启动入口脚本：启动应用前先执行 prisma migrate deploy。
 # sed 去除 Windows CRLF 行尾——开发机是 Windows，git 可能把 LF 转成 CRLF，
 # Alpine 的 /bin/sh 遇到 \r 会报 not found 或静默失败。
 COPY docker-entrypoint.sh ./
 RUN chmod +x docker-entrypoint.sh && sed -i 's/\r$//' docker-entrypoint.sh
-
 # prisma migrate deploy 运行时需要向 @prisma+engines 目录写入引擎二进制，
 # 而 node_modules 在 COPY 阶段以 root 创建，app 用户无写权限 → 迁移失败。
 # 把 node_modules 所有权交给 app，让运行时的 prisma CLI 能正常写入。
