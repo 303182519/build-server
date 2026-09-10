@@ -12,6 +12,8 @@ export const resolveJobSseEventName = (status: JobStatus) => {
   return JOB_SSE_EVENT.UPDATED;
 };
 
+// ['11','22', '', ''].join('\n')\
+// '11\n22\n\n'
 export const formatSseEvent = (event: IJobSseEvent) => {
   return [
     `event: ${event.event}`,

@@ -7,7 +7,7 @@ import {
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { createResponse } from '../response/base.response';
-import { Response } from 'express';
+import { Request, Response } from 'express';
 /**
  * 响应包装拦截器
  * 将所有成功响应包装为统一格式: { code, data, message }
@@ -17,7 +17,14 @@ import { Response } from 'express';
 export class ResponseInterceptor<T> implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler<T>): Observable<any> {
     const httpContext = context.switchToHttp();
+    const request = httpContext.getRequest<Request>();
     const response = httpContext.getResponse<Response>();
+    const routePath = (request.route as { path?: string } | undefined)?.path;
+
+    // Terminus health responses have their own contract; keep them unwrapped.
+    if (request.method === 'GET' && routePath === '/health') {
+      return next.handle() as Observable<unknown>;
+    }
 
     // 如果开发者手动使用 @Res() 原生响应，跳过拦截器封装，防止冲突
     if (response.headersSent) {
@@ -36,8 +43,8 @@ export class ResponseInterceptor<T> implements NestInterceptor {
         if (
           data &&
           typeof data === 'object' &&
-          typeof (data as any).code === 'number' &&
-          typeof (data as any).message === 'string'
+          typeof (data as Record<string, unknown>).code === 'number' &&
+          typeof (data as Record<string, unknown>).message === 'string'
         ) {
           return data;
         }
