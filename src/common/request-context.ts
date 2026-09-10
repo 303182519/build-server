@@ -44,7 +44,7 @@ export function setCacheState(state: CacheState, key?: string): void {
   if (key) store.cacheKey = key;
 }
 
-/** Day 45：把当前请求的 requestId 写进 CLS（由 RequestIdMiddleware 调用）。 */
+/** 把当前请求的 requestId 写进 CLS（由 RequestIdMiddleware 调用）。 */
 export function setRequestId(requestId: string): void {
   const store = requestContextStorage.getStore();
   if (!store) return; // 没有请求上下文——忽略（和 setCacheState 同样的降级哲学）

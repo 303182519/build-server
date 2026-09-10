@@ -170,7 +170,7 @@ export class PostsController {
     return this.posts.remove(id, user);
   }
 
-  // Day 39：上传封面图。multipart/form-data，字段名 file；multer 在 CoverUploadInterceptor 里解析。
+  // 上传封面图。multipart/form-data，字段名 file；multer 在 CoverUploadInterceptor 里解析。
   // @UseInterceptors 的拦截器经 DI 实例化——它注入 ConfigService 拿到配置驱动的 limits / fileFilter。
   // ★ @HttpCode(200)：这是【更新】已有文章的封面，不是创建资源，所以不该用 @Post 默认的 201。
   @Post(':id/cover')

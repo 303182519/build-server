@@ -9,7 +9,7 @@ import { ExceptionInfo } from '@/common/exceptions/base.exception';
 //   { code:0, data, message:"ok", requestId, timestamp }
 // 所以 Controller 方法的**真实返回类型**和**实际 JSON**不一致——Swagger 默认按返回
 // 类型推断会少了这层外壳。这两个装饰器用 $ref 把"外壳 + 具体 data 模型"拼起来，
-// 让 /docs 显示真实结构。这就是把 Day 19 的响应规范"如实写进文档"。
+// 让 /docs 显示真实结构。这就是把响应规范"如实写进文档"。
 // ============================================================================
 
 // 成功响应：data 是 model（或 model 数组）

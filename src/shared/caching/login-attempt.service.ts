@@ -6,14 +6,14 @@ import { CacheKeys } from './cache.constants';
 import { withRedis } from './redis-fallback';
 import { AUTH_LOCKOUT } from '@/common/constants/auth';
 
-// Day 40：账号级登录锁定。和 Day 35 的限流（@Throttler，**按 IP**）正交——
+// 账号级登录锁定。和限流（@Throttler，**按 IP**）正交——
 //   限流挡「同一来源 IP 的洪泛」，锁定挡「针对同一账号的密码爆破」。
 //   攻击者用一堆 IP（代理池）撞一个账号时，IP 限流逐个 IP 都没超阈值，
 //   只有「账号维度」的计数能把这种爆破拦下来。
 //
-// 状态落在 Redis（一个带 TTL 的计数器 key），复用 Day 36/37 的「可选层」哲学：
+// 状态落在 Redis（一个带 TTL 的计数器 key），复用「可选层」哲学：
 //   Redis 连不上 → 整套锁定静默关闭，登录照常走（哪怕少了这层防护，也不让登录挂）。
-//   这和存储选 S3 时的 fail-fast（Day 39 §6）刻意相反：锁定是「锦上添花的安全层」，
+//   这和存储选 S3 时的 fail-fast 刻意相反：锁定是「锦上添花的安全层」，
 //   不是运营命脉，挂了宁可降级。
 //
 // 单 key 设计：auth:loginFail:email=<email> = 失败次数，首次失败时起算窗口（windowSec），

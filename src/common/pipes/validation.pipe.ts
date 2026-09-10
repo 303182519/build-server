@@ -9,7 +9,7 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 
 // 提醒一下，你不必自己构建通用验证管道，因为 ValidationPipe 由 Nest 开箱即用。
-// 下面只是个例子： https://xiguadev.com/node-60days/day-18
+// 下面只是个例子
 @Injectable()
 export class ValidationPipe<T> implements PipeTransform<T> {
   async transform(value: T, { metatype }: ArgumentMetadata) {
