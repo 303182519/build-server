@@ -91,6 +91,17 @@ curl -N \
 | 重试 | 需自管 | BullMQ attempts |
 | 多实例 | 可能重复执行 | 队列消费 |
 
+## BullMQ jobId 约定
+
+BullMQ 拒绝「纯整数字符串」作为 custom jobId（`Job.validateOptions()` 按 `` `${parseInt(id, 10)}` === id `` 判定，命中即抛
+`Custom Id cannot be integers`），而本项目的业务 jobId 是雪花 ID（纯数字串）。因此 `JobQueueService.enqueue()` 会统一加
+`job-` 前缀后再交给 BullMQ，调用方仍只需传业务 ID：
+
+- 业务 ID（`job_runs.id` / `IBullJobData.jobId`）始终是纯雪花 ID，worker 用 `BigInt(data.jobId)` 反查记录；
+- BullMQ jobId 形如 `job-217432768118784000`，落库在 `job_runs.bull_job_id`，仅用于队列查询 / 取消 / 补偿；
+- 转换是确定性的且幂等（已带前缀不再重复加），同一业务 jobId 重复入队仍命中同一个 BullMQ job；
+- 前缀用 `-` 而非 `:`：BullMQ 另有一条「jobId 不得含 `:`（除非 `split(':').length === 3`）」的兼容性校验。
+
 ## Redis
 
 任务系统依赖 Redis。未配置 `REDIS_URL` / `REDIS_HOST` 时，Jobs 模块初始化会失败。
