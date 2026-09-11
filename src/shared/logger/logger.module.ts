@@ -177,7 +177,12 @@ function isHealthProbe(url: string | undefined): boolean {
           customReceivedMessage: (req: IncomingMessage) => {
             return `HTTP ${req.method} ${sanitizeUrl(req.url ?? '')} received`;
           },
-          // 5xx=error、4xx=warn、其余=info；被客户端中断的请求升到 warn 便于排查
+          // 5xx=error、4xx=warn、其余=info。
+          // pino-http 会在「请求到达」和「响应结束」两个时点各调用一次本函数：
+          //   - 请求到达时响应尚未写出（headersSent=false、writableEnded=false），应记 info；
+          //   - 响应已开始写出却未正常结束（headersSent=true 且 writableEnded=false），
+          //     说明连接中途断开（客户端中断 / 超时），升到 warn 便于排查。
+          // 不能只判断 !writableEnded，否则「请求到达」也会被判为 warn。
           customLogLevel: (
             _req: IncomingMessage,
             res: ServerResponse,
@@ -185,7 +190,7 @@ function isHealthProbe(url: string | undefined): boolean {
           ) => {
             if (error || res.statusCode >= 500) return 'error';
             if (res.statusCode >= 400) return 'warn';
-            if (!res.writableEnded) return 'warn';
+            if (res.headersSent && !res.writableEnded) return 'warn';
             return 'info';
           },
           customAttributeKeys: {
