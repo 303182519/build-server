@@ -106,7 +106,11 @@ export interface LoggerConfig {
   level?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal' | 'silent';
   /** 是否包含请求上下文信息（requestId, userId 等） */
   includeContext: boolean;
-  /** 慢请求阈值（毫秒），超过此值的请求标记为 warn */
+  /**
+   * 慢请求阈值（毫秒）：响应耗时超过此值的请求，访问日志消息追加 `[SLOW]` 标记。
+   * 注意：**只作标记，不改变日志级别**——级别仍由状态码 / 中断决定（见 ADR-002）。
+   * 慢请求告警请在采集侧按 `[SLOW]` / `responseTime` 字段配置，不要复用 warn 级别。
+   */
   slowRequestThreshold: number;
   /** 日志输出目标：console = 控制台，file = 文件 */
   output?: 'console' | 'file';

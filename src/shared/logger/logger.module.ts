@@ -174,15 +174,10 @@ function isHealthProbe(url: string | undefined): boolean {
           ) => {
             return `HTTP ${req.method} ${sanitizeUrl(req.url ?? '')} ${res.statusCode} - ERROR: ${error.message}`;
           },
-          customReceivedMessage: (req: IncomingMessage) => {
-            return `HTTP ${req.method} ${sanitizeUrl(req.url ?? '')} received`;
-          },
           // 5xx=error、4xx=warn、其余=info。
-          // pino-http 会在「请求到达」和「响应结束」两个时点各调用一次本函数：
-          //   - 请求到达时响应尚未写出（headersSent=false、writableEnded=false），应记 info；
-          //   - 响应已开始写出却未正常结束（headersSent=true 且 writableEnded=false），
-          //     说明连接中途断开（客户端中断 / 超时），升到 warn 便于排查。
-          // 不能只判断 !writableEnded，否则「请求到达」也会被判为 warn。
+          // 注意：customLogLevel 会同时被「请求到达」和「响应结束」两个时点调用，
+          // 这里之所以能只按响应结束时序判断，正是因为上面没有开启「请求到达」日志。
+          // 若将来要重新引入到达日志，必须重新区分两个时点，否则到达日志会被判成 warn。
           customLogLevel: (
             _req: IncomingMessage,
             res: ServerResponse,
@@ -190,7 +185,8 @@ function isHealthProbe(url: string | undefined): boolean {
           ) => {
             if (error || res.statusCode >= 500) return 'error';
             if (res.statusCode >= 400) return 'warn';
-            if (res.headersSent && !res.writableEnded) return 'warn';
+            // 响应未正常结束 = 连接被客户端中断 / 超时，升到 warn 便于排查
+            if (!res.writableEnded) return 'warn';
             return 'info';
           },
           customAttributeKeys: {

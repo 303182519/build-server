@@ -198,6 +198,18 @@ pnpm start:dev
 > 文件输出（`app.log` / `error.log`）始终是 UTF-8，用编辑器打开中文正常，
 > 说明落盘数据本身没有问题。
 
+### 每个请求只产出一条访问日志（无「请求到达」日志）
+
+模块**不**配置 `customReceivedMessage`，因此每个请求只有响应结束时的一条访问日志
+（含 `statusCode` / `responseTime` / `[SLOW]`），不会出现 `... received` 那种到达行。
+理由：到达行不含状态与耗时等结果信息，会让日志量翻倍、稀释检索并污染基于 `level` 的告警
+；「请求开始/结束」的配对属于 APM / OpenTelemetry 的职责。
+需要排障「请求到底有没有进来」时，可临时把 `LOG_LEVEL` 调到 `debug` 由应用日志兜底。
+
+> ⚠️ 若重新启用到达日志：`pino-http` 的 `customLogLevel` 会同时被「请求到达」和「响应结束」
+> 两个时点调用（无 `customReceivedLogLevel` 选项），必须显式区分两个时点，否则到达日志会被
+> 判成 `warn`。
+
 ### 请求被客户端中断后没有访问日志
 
 `pino-http` 会在 `finish` **和** `close` 时产出日志；被中断的请求

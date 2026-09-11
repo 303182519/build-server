@@ -105,3 +105,20 @@ logrotate / 采集 Agent / 容器日志驱动更符合容器化最佳实践，�
 
 **日期**
 2026-09-11
+
+**修订记录**
+
+- **2026-09-11**：移除「请求到达」访问日志（删除 `pinoHttp.customReceivedMessage`）。
+  此前每请求产出两条访问日志（到达行 + 结束行），与本文档「每条请求只产生一条访问日志」
+  的验证标准（见「验证方式」第 1 条）相悖。到达行不含状态码 / 耗时等结果信息，会让日志量
+  翻倍、稀释检索并污染基于 `level` 的告警；请求开始 / 结束的配对交由 APM / 追踪链路承担。
+  随之 `customLogLevel` 恢复为「未正常结束即 warn」的简单判定（该函数不再被「到达」时点调用）。
+  注意：pino-http 无 `customReceivedLogLevel` 选项，若将来重新引入到达日志，必须重新区分
+  两个调用时点，否则到达日志会被判成 `warn`。
+- **2026-09-11**：明确慢请求的级别口径 —— 超过 `LOG_SLOW_REQUEST_THRESHOLD` 只追加
+  `[SLOW]` 标记，**级别保持 info 不变**（与本文档「决策」第 1 条一致）。此前
+  `.env` 与 `configuration.interface.ts` 的注释误写为「记录为 warn 级别」，已按本文档修正。
+  原因：`pino-http` 的 `customLogLevel(req, res, err)` 拿不到 `responseTime`，若在其中另算耗时
+  会与日志里的 `responseTime` 字段形成第二个时间源，阈值边界可能不一致；
+  且「慢」不等于「失败」，不应污染 warn / error 告警。慢请求告警应在采集侧按
+  `[SLOW]` / `responseTime` 单独配置。
