@@ -10,6 +10,7 @@ import { Request, Response } from 'express';
 import { IsProduction } from '../constants/environment';
 import { BaseException } from '../exceptions/base.exception';
 import { BizCode, StandardResponse } from '../response/base.response';
+import { sanitizeUrl } from '../../shared/logger/log-sanitizer';
 
 /**
  * TODO: 日志系统代办
@@ -176,10 +177,31 @@ export class GlobalExceptionsFilter implements ExceptionFilter {
     }
 
     // 记录错误日志
-    this.logger.error(
-      `[${request.method}] ${request.url} ${responseBody.code} bizCode=${responseBody.bizCode} reqId=${responseBody.requestId} Message: ${responseBody.message}`,
-      exception instanceof Error ? exception.stack : undefined,
-    );
+    // 级别与访问日志（logger.module 的 customLogLevel）保持同一口径：
+    // - 5xx / 未预期异常 = error，附原始异常对象（含堆栈）供定位
+    // - 4xx = warn，属于预期内的客户端问题（如 token 过期），不打堆栈
+    // 字段结构化输出，避免把 method/url/status/bizCode 拼进 message 后
+    // 采集侧只能做字符串解析、且 bizCode 无法按字段聚合告警。
+    const logFields = {
+      method: request.method,
+      url: sanitizeUrl(request.url),
+      status: responseBody.code,
+      bizCode: responseBody.bizCode,
+      requestId: responseBody.requestId,
+    };
+
+    if (responseBody.code >= HttpStatus.INTERNAL_SERVER_ERROR) {
+      this.logger.error(
+        {
+          ...logFields,
+          // 传原始异常对象：pino 的 err 序列化能保留真实异常名与堆栈
+          ...(exception instanceof Error ? { err: exception } : {}),
+        },
+        'HTTP 请求处理失败',
+      );
+    } else {
+      this.logger.warn(logFields, 'HTTP 请求被拒绝');
+    }
 
     response.status(responseBody.code).json(responseBody);
   }
