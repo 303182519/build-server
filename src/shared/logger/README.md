@@ -21,9 +21,8 @@
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `LOG_LEVEL` | `info` | trace < debug < info < warn < error < fatal < silent |
-| `LOG_JSON_FORMAT` | 生产 `true` / 其他 `false` | 控制台是否输出结构化 JSON |
 | `LOG_INCLUDE_CONTEXT` | `true` | 是否通过 CLS 给所有日志附带 `requestId` / `bizCode` |
-| `LOG_SLOW_REQUEST_THRESHOLD` | `1000` | 慢请求阈值（毫秒），超阈值追加 `[SLOW]` |
+| `LOG_SLOW_REQUEST_THRESHOLD` | `500` | 慢请求阈值（毫秒），超阈值追加 `[SLOW]` |
 | `LOG_OUTPUT` | `console` | `console` \| `file` |
 | `LOG_DIR` | `logs` | 日志目录（文件输出时自动创建） |
 | `LOG_MAX_FILE_SIZE` | `10` | 单个日志文件上限（MB） |
@@ -31,15 +30,18 @@
 
 ### 控制台格式
 
-| 环境 | 控制台输出 |
+控制台格式**只由 `NODE_ENV` 决定**（代码里的 `IsDev`），不存在独立开关；
+下表仅在 `LOG_OUTPUT=console` 时生效（`LOG_OUTPUT=file` 时只落盘不写控制台）：
+
+| `NODE_ENV` | 控制台输出 |
 | --- | --- |
-| 开发（`NODE_ENV=development` 或未设置）且 `LOG_JSON_FORMAT=false` 或未设置 | `pino-pretty` 人类可读格式（带颜色） |
-| 其他所有情况（生产 / test / staging / 显式 `LOG_JSON_FORMAT=true`） | 单行 JSON（写入 stdout，可被采集链路直接解析） |
+| `development` 或未设置 | `pino-pretty` 人类可读格式（带颜色） |
+| `production` / `test` / `staging` 等其他值 | 单行 JSON（写入 stdout，可被采集链路直接解析） |
 
 > ⚠️ `pino-pretty` 被放在 **devDependencies**（生产镜像 `pnpm install --prod` 不会安装它），
 > 因此代码用 `IsDev` 而不是「非生产」来收敛：只有真正的开发环境才会加载该 transport。
-> 非开发环境即使把 `LOG_JSON_FORMAT` 设成 `false`，控制台也只会输出 JSON——这既保证采集链路
-> 永远拿到结构化日志，也避免缺包时 transport 初始化失败导致应用启动即崩。
+> 非开发环境一律输出 JSON——这既保证采集链路永远拿到结构化日志，
+> 也避免缺包时 transport 初始化失败导致应用启动即崩。
 
 ### 文件输出
 
@@ -187,9 +189,13 @@ this.logger.debug(`callback ${sanitizeUrl(req.url)}`);
 
 ### 生产 stdout 不是 JSON
 
-检查 `NODE_ENV` 是否真的是 `production`（生产默认 `LOG_JSON_FORMAT=true`，控制台即 JSON）。
-若 `NODE_ENV` 不是 `production`，控制台会走 `pino/file` 输出 JSON 而不是 `pino-pretty`，
-两者都是 JSON，但注意 `pino-pretty` 仅在开发环境下启用。
+控制台格式只由 `NODE_ENV` 决定，没有独立的格式开关：
+
+- `NODE_ENV=production`（或 `test` / `staging` 等非 `development` 值）→ 走 `pino/file` 写 stdout，输出单行 JSON。
+- `NODE_ENV=development` 或未设置 → 走 `pino-pretty`，输出带颜色的人类可读格式（**不是** JSON）。
+
+因此看到美化格式时，先确认 `NODE_ENV` 没有被设成 `development`（或漏设）。
+另：`LOG_OUTPUT=file` 时日志只落盘、不写 stdout，也就不存在「stdout JSON」。
 
 ### 启动报错 `option.transport.targets do not allow custom level formatters`
 

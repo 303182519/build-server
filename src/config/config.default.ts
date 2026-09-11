@@ -96,7 +96,7 @@ export const defaultConfig = registerAs('default', (): AppConfig => ({
     includeContext: process.env.LOG_INCLUDE_CONTEXT !== 'false',
     slowRequestThreshold: parseNumberEnv(
       process.env.LOG_SLOW_REQUEST_THRESHOLD,
-      1000,
+      500,
     ),
     output: (process.env.LOG_OUTPUT as LoggerConfig['output']) || 'console',
     logDir: process.env.LOG_DIR || 'logs',
