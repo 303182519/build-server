@@ -54,8 +54,9 @@ export class CommonModule implements NestModule {
 
     consumer
       .apply(cookieParser(), RequestIdMiddleware, HttpLoggerMiddleware)
-      // /api/health 不进访问日志：会被探针高频调用，日志量没价值
+      // 健康探针不进访问日志：会被高频调用，日志量没价值
       .exclude({ path: 'api/health', method: RequestMethod.GET })
+      .exclude({ path: 'api/health/ready', method: RequestMethod.GET })
       .forRoutes('*');
   }
 }

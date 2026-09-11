@@ -100,8 +100,8 @@ COPY --from=build /app/dist ./dist
 # 建好就 chown 给 app。S3 后端用不到，留个空目录也不碍事。
 RUN mkdir -p uploads && chown -R app:app uploads
 
-# 进程级健康检查：/api/health 检查 DB + Cache 连通性，已 @Public + @SkipThrottle，
-# 适合被高频探针打。3 次连续失败才判 unhealthy，给网络抖动留余量。
+# 进程级存活检查：不查 DB / Redis，避免下游短暂故障触发错误重启。
+# 就绪检查由编排层请求 /api/health/ready。3 次连续失败才判 unhealthy，给网络抖动留余量。
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD wget -q -O /dev/null http://localhost:${PORT:-3000}/api/health || exit 1
 

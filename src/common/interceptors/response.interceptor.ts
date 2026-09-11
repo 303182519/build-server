@@ -21,8 +21,11 @@ export class ResponseInterceptor<T> implements NestInterceptor {
     const response = httpContext.getResponse<Response>();
     const routePath = (request.route as { path?: string } | undefined)?.path;
 
-    // Terminus health responses have their own contract; keep them unwrapped.
-    if (request.method === 'GET' && routePath === '/health') {
+    // Health responses have their own contract; keep them unwrapped.
+    if (
+      request.method === 'GET' &&
+      (routePath === '/health' || routePath === '/health/ready')
+    ) {
       return next.handle() as Observable<unknown>;
     }
 

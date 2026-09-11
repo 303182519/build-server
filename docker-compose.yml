@@ -161,9 +161,9 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      # 覆盖镜像内置的探针：镜像里的 HEALTHCHECK 打 /api/health（查 DB + Redis 连通性），
-      # compose 里显式再声明一次，确保探针参数与编排需求一致。
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/api/health"]
+      # Compose 探针检查就绪状态：必须确认 DB + Redis 可达后才允许接流量。
+      # 镜像内置 HEALTHCHECK 只检查进程存活，避免下游短暂故障触发错误重启。
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/api/health/ready"]
       interval: 10s
       timeout: 5s
       retries: 5

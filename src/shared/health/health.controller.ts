@@ -22,11 +22,23 @@ export class HealthController {
   ) {}
 
   @Get()
+  @ApiOperation({
+    summary: '存活探针：进程级，不查 DB/Redis',
+  })
+  liveness() {
+    return {
+      status: 'ok',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  @Get('ready')
   @HealthCheck()
   @ApiOperation({
-    summary: '健康检查（Docker HEALTHCHECK / 探针 / 负载均衡器）',
+    summary: '就绪探针：检查 DB 和 Redis，任一不可用返回 503',
   })
-  check() {
+  readiness() {
     return this.health.check([
       // PrismaHealthIndicator 内部执行 SELECT 1，默认 1000ms 超时
       () => this.db.pingCheck('database', this.prisma),
