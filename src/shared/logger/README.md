@@ -22,7 +22,7 @@
 | --- | --- | --- |
 | `LOG_LEVEL` | `info` | trace < debug < info < warn < error < fatal < silent |
 | `LOG_JSON_FORMAT` | 生产 `true` / 其他 `false` | 控制台是否输出结构化 JSON |
-| `LOG_INCLUDE_CONTEXT` | `true` | 是否通过 CLS 给所有日志附带 `requestId` |
+| `LOG_INCLUDE_CONTEXT` | `true` | 是否通过 CLS 给所有日志附带 `requestId` / `bizCode` |
 | `LOG_SLOW_REQUEST_THRESHOLD` | `1000` | 慢请求阈值（毫秒），超阈值追加 `[SLOW]` |
 | `LOG_OUTPUT` | `console` | `console` \| `file` |
 | `LOG_DIR` | `logs` | 日志目录（文件输出时自动创建） |
@@ -101,15 +101,52 @@ export class UserService {
 }
 ```
 
-### 请求上下文（requestId）
+### 请求上下文（requestId / bizCode）
 
 - 入站请求：`RequestIdMiddleware` 会复用 `X-Request-ID` 请求头，缺失时生成 UUID，
-  并写回同名响应头。
-- HTTP 访问日志：从序列化后的 `request.requestId` 读取。
-- 应用日志：当 `LOG_INCLUDE_CONTEXT=true` 时，通过 pino `mixin` 读取 CLS，
+  并写回同名响应头，同时把 requestId 写进 CLS。
+- 应用日志 + HTTP 访问日志：当 `LOG_INCLUDE_CONTEXT=true` 时，pino `mixin` 读取 CLS，
   给**拿不到 `req` 的深层代码**（service / 异步回调）也补上顶层 `requestId`。
+- 业务码：`GlobalExceptionsFilter` 会把被拒绝请求的 `bizCode` 写进 CLS，同样由 `mixin`
+  注入顶层 `bizCode`——这样「响应结束的那条访问日志」自带业务码。
+
+> ⚠️ requestId / bizCode 只有**顶层**这一条字段路径，不要在日志里再输出
+> `request.requestId` 之类的重复维度（见下文字段契约）。
+
+> ⚠️ 关闭 `LOG_INCLUDE_CONTEXT` 会同时失去顶层 `requestId` 与顶层 `bizCode`。4xx 的业务码
+> 只由访问日志承载，因此不希望丢 4xx 业务语义时请保持该开关为 `true`（默认）。
 
 > 注意：模块不自动注入 `userId` / `traceId`。需要这类字段请由业务代码显式传入。
+
+## 日志字段契约（单一真相源）
+
+同一个维度只允许存在一条字段路径，否则采集侧要为告警/看板写两套字段规则。
+当前契约：
+
+| 维度 | 字段路径 | 归属日志 |
+| --- | --- | --- |
+| 请求 ID | 顶层 `requestId` | 访问日志 + 应用日志 |
+| 业务码 | 顶层 `bizCode` | 访问日志（4xx / 5xx 都有）；5xx 错误日志另带一份 |
+| HTTP 方法 / 路径 | `request.method` / `request.url` | **仅**访问日志 |
+| HTTP 状态码 | `response.statusCode` | **仅**访问日志 |
+| 耗时 | `responseTime` | **仅**访问日志 |
+| 异常堆栈 | 顶层 `err`（`{ type, message, stack }`） | **仅** 5xx 错误日志 |
+| 日志来源 | `context` | 应用日志（如 `GlobalExceptionsFilter`） |
+
+由此推出两条行为约定：
+
+1. **4xx 只产出一条日志**：异常过滤器不再单独记 4xx。此前同一请求会产出「过滤器 warn +
+   访问日志 warn」两条重复记录，且字段路径不一致（`status` vs `response.statusCode`）。
+   业务码改由访问日志的顶层 `bizCode` 暴露，告警规则按 `response.statusCode` + `bizCode` 配置即可。
+2. **5xx 额外记一条 error 日志**：被异常过滤器捕获的异常不会流经 `pino-http`，堆栈只能在那里保留。
+   该日志不重复 HTTP 维度，靠顶层 `requestId` 与访问日志关联。
+
+> ⚠️ 异常过滤器用 `{ err: exception }` 记录异常：`pino` 默认**不**序列化 `Error`，模块已在
+> `serializers` 注册 `err: stdSerializers.err`；不注册时 `err` 会落成 `{}`，message / stack 全丢。
+>
+> ⚠️ 不要把 `request` / `response` 当作**键名**写进应用日志：这两个键已被 pino-http 的序列化器
+> 占用（`customAttributeKeys`），值会被 `pino-std-serializers` 的内置序列化器二次处理
+> （例如 `{ statusCode: 401 }` 会被改写成 `{ statusCode: null }`，因为普通对象没有 `headersSent`）。
 
 ## 安全：日志脱敏
 

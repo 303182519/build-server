@@ -10,7 +10,7 @@ import { Request, Response } from 'express';
 import { IsProduction } from '../constants/environment';
 import { BaseException } from '../exceptions/base.exception';
 import { BizCode, StandardResponse } from '../response/base.response';
-import { sanitizeUrl } from '../../shared/logger/log-sanitizer';
+import { setBizCode } from '../request-context';
 
 /**
  * TODO: 日志系统代办
@@ -176,31 +176,28 @@ export class GlobalExceptionsFilter implements ExceptionFilter {
       responseBody.bizCode = fallbackBizCode(responseBody.code);
     }
 
-    // 记录错误日志
-    // 级别与访问日志（logger.module 的 customLogLevel）保持同一口径：
-    // - 5xx / 未预期异常 = error，附原始异常对象（含堆栈）供定位
-    // - 4xx = warn，属于预期内的客户端问题（如 token 过期），不打堆栈
-    // 字段结构化输出，避免把 method/url/status/bizCode 拼进 message 后
-    // 采集侧只能做字符串解析、且 bizCode 无法按字段聚合告警。
-    const logFields = {
-      method: request.method,
-      url: sanitizeUrl(request.url),
-      status: responseBody.code,
-      bizCode: responseBody.bizCode,
-      requestId: responseBody.requestId,
-    };
+    // 每个请求只保留「响应结束的那条访问日志」作为权威记录（ADR-002）。
+    // HTTP 维度（request.method / request.url / response.statusCode / responseTime）
+    // 只由访问日志承载，异常过滤器不再重复输出，避免同一维度出现两套字段路径。
+    // 这里只把业务码交给 CLS，由 pino 的 mixin 注入到那条访问日志的顶层 `bizCode` 上——
+    // 4xx（预期内的客户端问题，如 token 过期）因此不再产生第二条 warn 日志。
+    if (responseBody.bizCode) {
+      setBizCode(responseBody.bizCode);
+    }
 
+    // 只有 5xx / 未预期异常才额外记一条 error 日志：被本过滤器捕获的异常对象不会流经
+    // pino-http，堆栈只能在这里保留。该日志不重复 HTTP 维度，靠顶层 requestId 与访问日志关联。
     if (responseBody.code >= HttpStatus.INTERNAL_SERVER_ERROR) {
       this.logger.error(
         {
-          ...logFields,
-          // 传原始异常对象：pino 的 err 序列化能保留真实异常名与堆栈
+          bizCode: responseBody.bizCode,
+          requestId: responseBody.requestId,
+          // 传原始异常对象：logger.module 的 serializers 已注册 stdSerializers.err，
+          // `{ err }` 会输出 { type, message, stack }
           ...(exception instanceof Error ? { err: exception } : {}),
         },
         'HTTP 请求处理失败',
       );
-    } else {
-      this.logger.warn(logFields, 'HTTP 请求被拒绝');
     }
 
     response.status(responseBody.code).json(responseBody);

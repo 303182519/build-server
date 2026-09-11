@@ -44,8 +44,14 @@
 5. **脱敏**：`pinoHttp.redact` 覆盖请求头凭证与常见敏感字段；新增
    `sanitizeUrl()` 对 URL 的敏感查询参数（token/code/ticket/signature…）脱敏。
 6. **健康探针**：`autoLogging.ignore` 过滤 `/api/health`、`/api/health/ready`。
-7. **requestId**：HTTP 日志由 `req` 序列化器携带；应用日志由 `pinoHttp.mixin`
-   读取 CLS 补全，保证深层代码也能关联请求。
+7. **请求上下文字段**：`requestId` 与 `bizCode` 统一由 `pinoHttp.mixin` 读取 CLS 注入
+   **顶层**，全链路只保留这一条字段路径。`req` 序列化器不再输出 `request.requestId`
+   （此前上游带 `X-Request-ID` 时同一维度会出现两条路径）。
+8. **日志归属与去重**：HTTP 维度（`request.method` / `request.url` / `response.statusCode` /
+   `responseTime`）只由访问日志承载；`GlobalExceptionsFilter` 只把业务码写进 CLS（由 mixin
+   注入访问日志），**不再单独产出 4xx 日志**；仅 5xx 额外产出一条 error 日志承载异常堆栈。
+9. **异常序列化**：`serializers` 显式注册 `err: stdSerializers.err`。pino 默认不序列化
+   `Error` 实例，缺失该注册时 `{ err: exception }` 会落成 `{}`，导致 5xx 的 message / stack 丢失。
 
 **备选方案**
 
@@ -90,11 +96,18 @@ logrotate / 采集 Agent / 容器日志驱动更符合容器化最佳实践，�
 - pino 自身配置只能写在 `pinoHttp` 内部，禁止再展开到 `Params` 根层级；
 - 传输目标（target）的 `level` 必须写在 target 层，不能写进 `options`；
 - 记录 URL 必须经过 `sanitizeUrl()`；记录 body 前需确认不含密码/凭证；
-- 新增访问日志能力优先扩展 `pino-http` 配置，禁止再新增自建访问日志中间件。
+- 新增访问日志能力优先扩展 `pino-http` 配置，禁止再新增自建访问日志中间件；
+- 同一维度只允许一条字段路径：HTTP 维度只由访问日志输出，`requestId` / `bizCode` 只输出在顶层，
+  异常堆栈 `err` 只出现在 5xx 错误日志；
+- 应用日志禁止使用 `request` / `response` 作为键名 —— 这两个键已被 pino-http 的序列化器占用
+  （`customAttributeKeys`），值会被 `pino-std-serializers` 的内置序列化器二次处理；
+- 预期内的 4xx 不得再新增第二条日志（响应结束的那条访问日志即为权威记录）。
 
 **验证方式**
 
-1. 启动服务 → 触发一次 2xx / 4xx / 5xx 请求 → 每条请求只产生一条访问日志，级别分别 info/warn/error；
+1. 启动服务 → 触发一次 2xx / 4xx / 5xx 请求 → 2xx / 4xx 各只产生一条访问日志（级别 info / warn）
+   且顶层带 `bizCode`；5xx 额外产生一条异常过滤器 error 日志（含非空 `err.stack`），
+   两条日志共享同一个 `requestId`；
 2. 触发超过 `LOG_SLOW_REQUEST_THRESHOLD` 的请求 → 消息带 `[SLOW]`；
 3. 客户端主动断开请求 → 产生一条 `warn` 级日志且 `res.writableEnded` 反映中断；
 4. 生产配置下 stdout 输出可被 `jq` 解析（合法 JSON）；`logs/app.log` 达到阈值后真实轮转；
@@ -122,3 +135,16 @@ logrotate / 采集 Agent / 容器日志驱动更符合容器化最佳实践，�
   会与日志里的 `responseTime` 字段形成第二个时间源，阈值边界可能不一致；
   且「慢」不等于「失败」，不应污染 warn / error 告警。慢请求告警应在采集侧按
   `[SLOW]` / `responseTime` 单独配置。
+- **2026-09-11**：收敛字段契约、消除 4xx 双写（新增「决策」第 7/8/9 条）。
+  起因：一次 401 请求产出两条重复的 warn 日志（异常过滤器 + 访问日志），且同一维度出现两套
+  字段路径（`status` vs `response.statusCode`、`request.url` vs 顶层 `url`），采集侧要为告警 /
+  看板写两套规则；同时发现 5xx 日志的 `{ err: exception }` 实际落成 `{}`（`serializers` 只按
+  pino-http 的 `errKey='error'` 注册，`'err'` 键无序列化器），堆栈一直是丢的。
+  变更：`GlobalExceptionsFilter` 不再产 4xx 日志，改为把 `bizCode` 写入 CLS 并由 `mixin` 注入
+  访问日志顶层；`req` 序列化器移除 `requestId`（requestId 统一只在顶层）；5xx 错误日志不再重复
+  HTTP 维度（只留 `bizCode` / `requestId` / `err`），靠 `requestId` 与访问日志关联；
+  `serializers` 注册 `err: stdSerializers.err` 修复堆栈丢失。
+  代价：5xx 场景需按 `requestId` 关联两条日志；`LOG_INCLUDE_CONTEXT=false` 时访问日志将同时
+  失去顶层 `requestId` 与 `bizCode`（4xx 业务语义随之丢失），已在 logger README 中标注。
+  未做（另需前置决策）：`clientIp` / `userAgent`（需先确定 trust proxy 层数）、
+  `env` / `service.version`（需确定版本来源）、`traceId`（需引入 OpenTelemetry）。

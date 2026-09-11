@@ -2,7 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { LoggerModule as PinoLoggerModule } from 'nestjs-pino';
 import type { Params } from 'nestjs-pino';
-import type { DestinationStream } from 'pino';
+import { stdSerializers, type DestinationStream } from 'pino';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { getLoggerConfig } from '../../config/configuration';
@@ -71,18 +71,18 @@ function isHealthProbe(url: string | undefined): boolean {
         const targets: PinoTransportTargets = [];
 
         if (wantConsole) {
-          if (IsDev) {
-            targets.push({
-              target: 'pino-pretty',
-              options: {
-                colorize: true,
-                translateTime: 'SYS:standard',
-                ignore: 'pid,hostname',
-              },
-            });
-          } else {
-            targets.push({ target: 'pino/file', options: { destination: 1 } });
-          }
+          // if (IsDev) {
+          //   targets.push({
+          //     target: 'pino-pretty',
+          //     options: {
+          //       colorize: true,
+          //       translateTime: 'SYS:standard',
+          //       ignore: 'pid,hostname',
+          //     },
+          //   });
+          // } else {
+          targets.push({ target: 'pino/file', options: { destination: 1 } });
+          // }
         }
 
         if (wantFile) {
@@ -196,23 +196,38 @@ function isHealthProbe(url: string | undefined): boolean {
             responseTime: 'responseTime',
           },
           serializers: {
+            // 注意：pino-http 的 wrapRequestSerializer 会先跑内置序列化器，再把「规范化后的
+            // 对象」交给这里，因此这里拿到的不一定是原始 IncomingMessage——只读取
+            // pino-std-serializers 保证存在的 method / url 两个字段，不要依赖 headers 等。
+            //
+            // requestId 不在这里输出：全链路只保留顶层 `requestId`（由 mixin 从 CLS 注入，
+            // 见下方），避免同一维度出现「request.requestId」与顶层「requestId」两条字段路径。
             req: (req: IncomingMessage) => ({
               method: req.method,
               url: sanitizeUrl(req.url ?? ''),
-              requestId: req.headers['x-request-id'],
             }),
             res: (res: ServerResponse) => ({
               statusCode: res.statusCode,
             }),
+            // pino 默认不序列化 Error 实例：不注册时 `{ err: exception }` 会落成 `{}`，
+            // message / stack 全部丢失（全局异常过滤器正是靠它记录 5xx 堆栈）。
+            // pino-http 只会把 errKey（按 customAttributeKeys 为 'error'）写进 serializers，
+            // 不会占用 'err' 键，因此这里注册 'err' 与访问日志的 'error' 互不干扰。
+            err: stdSerializers.err,
           },
           transport: { targets },
         };
 
-        // 让「拿不到 req 的深层代码」（service / 异步回调）也能凭 CLS 关联 requestId
+        // 让「拿不到 req 的深层代码」（service / 异步回调）也能凭 CLS 关联 requestId；
+        // 同时把异常过滤器写入的业务码注入日志——这样「响应结束的那条访问日志」自带
+        // bizCode，4xx 不必再由异常过滤器单独产出一条重复日志（见 ADR-002）。
         if (loggerConfig.includeContext) {
           pinoHttp.mixin = () => {
-            const { requestId } = getRequestContext();
-            return requestId ? { requestId } : {};
+            const { requestId, bizCode } = getRequestContext();
+            const props: Record<string, string> = {};
+            if (requestId) props.requestId = requestId;
+            if (bizCode) props.bizCode = bizCode;
+            return props;
           };
         }
 

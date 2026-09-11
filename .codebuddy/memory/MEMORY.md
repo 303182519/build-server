@@ -23,7 +23,23 @@
 1. **最后一个可变参数恒被当作 `context`**（`nestjs-pino/dist/Logger.js` 的 `call()`）。
 2. 结构化日志必须**对象在前、消息字符串在后**：`this.logger.error({ ...fields }, 'msg')`。
    - 若写成 `this.logger.error('msg', { fields })`，对象会被当成 `context` 或插值参数，**不会**成为顶层字段。
-3. `this.logger.error(msg, stackString)` 若 stack 匹配 `/\n\s*at /`，bridge 会构造 `new Error(msg)` 并把 `stack` 覆盖为传入值 → 日志里 `err.type` 变成 `"Error"`、`err.message` 是被格式化后的 message（与 stack 首行不一致）。想要真实异常名请用 `{ err: exception }` 字段。
+3. `this.logger.error(msg, stackString)` 若 stack 匹配 `/\n\s*at /`，bridge 会构造 `new Error(msg)` 并把 `stack` 覆盖为传入值 → 日志里 `err.type` 变成 `"Error"`、`err.message` 是被格式化后的 message（与 stack 首行不一致）。想要真实异常名请用 `{ err: exception }` 字段（前提：`serializers` 里已注册 `err`）。
+
+### pino-http 序列化行为与字段契约（易错）
+
+- `customAttributeKeys:{req:'request',res:'response',err:'error'}` 会让 pino-http 把序列化器写到
+  `serializers.request / .response / .error`，**不写 `err`**。pino 默认不序列化 `Error`，因此业务日志
+  `{ err: exception }` 必须配合 `serializers.err = stdSerializers.err`，否则落成 `{}`、message/stack 全丢。
+- `pino-std-serializers` 的 `wrapRequestSerializer` / `wrapResponseSerializer` 会**先跑内置序列化器**，再把
+  规范化结果交给自定义序列化器。推论：自定义 req 序列化器只能依赖 `method` / `url`（不要依赖 `headers`）；
+  应用日志**禁止把 `request` / `response` 当键名**（普通对象会被内置 res 序列化器按
+  `headersSent ? statusCode : null` 改写成 `null`）。
+- 顶层 `requestId` 的来源是 `pinoHttp.mixin`（CLS），不是 req 序列化器：pino-http 在 `RequestIdMiddleware`
+  之前执行，序列化时 `x-request-id` 尚未写入。mixin 在响应 `finish` 时确实能读到 ALS 上下文。
+- **字段契约（单一真相源）**：HTTP 维度（`request.method` / `request.url` / `response.statusCode` /
+  `responseTime`）只由访问日志承载；`requestId` / `bizCode` 只在**顶层**（mixin 从 CLS 注入）；
+  `err` 只在 5xx 错误日志。**4xx 不再单独记日志**（曾同一 401 双写两条 warn + 字段路径不一致），
+  业务码由访问日志顶层 `bizCode` 暴露。
 
 ## 项目约定
 

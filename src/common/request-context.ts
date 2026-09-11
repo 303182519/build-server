@@ -27,6 +27,9 @@ interface RequestContext {
   // 请求级 requestId。和 cache 一样存在 CLS 里——这样「看不到 req 的深层代码」
   // （service / 定时任务回调）也能凭 CLS 把日志关联到当前请求。pino 的 mixin 正是读它。
   requestId?: string;
+  // 请求级业务码。异常过滤器在拒绝/失败请求时写入，同样由 pino 的 mixin 注入日志——
+  // 这样「响应结束的那条访问日志」就能带上业务码，4xx 不必再单独打一条日志。
+  bizCode?: string;
 }
 
 export const requestContextStorage = new AsyncLocalStorage<RequestContext>();
@@ -49,4 +52,17 @@ export function setRequestId(requestId: string): void {
   const store = requestContextStorage.getStore();
   if (!store) return; // 没有请求上下文——忽略（和 setCacheState 同样的降级哲学）
   store.requestId = requestId;
+}
+
+/**
+ * 把当前请求的业务错误码写进 CLS（由 GlobalExceptionsFilter 调用）。
+ *
+ * 归属说明：业务码是「这次响应的属性」，权威落点是响应结束时的那条访问日志
+ * （通过 pino mixin 注入顶层 `bizCode`）。异常过滤器只写入、不再自己产出一条日志
+ * ——否则同一请求会同时出现「异常过滤器 warn」与「访问日志 warn」两条重复记录。
+ */
+export function setBizCode(bizCode: string): void {
+  const store = requestContextStorage.getStore();
+  if (!store) return; // 没有请求上下文——忽略（和 setRequestId 同样的降级哲学）
+  store.bizCode = bizCode;
 }
