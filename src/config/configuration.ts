@@ -56,7 +56,7 @@ export const getLoggerConfig = (
       loggerConfig.jsonFormat ?? process.env.NODE_ENV === 'production',
     includeContext: loggerConfig.includeContext ?? true,
     slowRequestThreshold: loggerConfig.slowRequestThreshold || 1000,
-    output: loggerConfig.output || 'both',
+    output: loggerConfig.output || 'console',
     logDir: loggerConfig.logDir || 'logs',
     maxFileSize: loggerConfig.maxFileSize || 10,
     maxFiles: loggerConfig.maxFiles || 7,

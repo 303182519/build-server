@@ -103,7 +103,7 @@ export const defaultConfig = registerAs('default', (): AppConfig => ({
       process.env.LOG_SLOW_REQUEST_THRESHOLD,
       1000,
     ),
-    output: (process.env.LOG_OUTPUT as LoggerConfig['output']) || 'both',
+    output: (process.env.LOG_OUTPUT as LoggerConfig['output']) || 'console',
     logDir: process.env.LOG_DIR || 'logs',
     maxFileSize: parseNumberEnv(process.env.LOG_MAX_FILE_SIZE, 10),
     maxFiles: parseNumberEnv(process.env.LOG_MAX_FILES, 7),

@@ -20,10 +20,16 @@ type PinoHttpOptions = Exclude<
   DestinationStream | [unknown, unknown]
 >;
 
-type PinoTransportTargets = Extract<
+/**
+ * pino 的 transport.targets 在类型定义中是 readonly 数组，无法直接 push。
+ * 这里取出其元素类型后重新声明为可变数组，仅用于本地组装 targets。
+ */
+type PinoTransportTarget = Extract<
   NonNullable<PinoHttpOptions['transport']>,
   { targets: unknown }
->['targets'];
+>['targets'][number];
+
+type PinoTransportTargets = PinoTransportTarget[];
 
 /** 健康探针路径：不进访问日志（会被高频调用，日志量没价值） */
 const HEALTH_PATHS = new Set([
@@ -59,10 +65,8 @@ function isHealthProbe(url: string | undefined): boolean {
         const loggerConfig = getLoggerConfig(configService);
         const isProduction = process.env.NODE_ENV === 'production';
 
-        const wantConsole =
-          loggerConfig.output === 'console' || loggerConfig.output === 'both';
-        const wantFile =
-          loggerConfig.output === 'file' || loggerConfig.output === 'both';
+        const wantConsole = loggerConfig.output === 'console';
+        const wantFile = loggerConfig.output === 'file';
 
         const targets: PinoTransportTargets = [];
 

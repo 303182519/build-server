@@ -24,7 +24,7 @@
 | `LOG_JSON_FORMAT` | 生产 `true` / 其他 `false` | 控制台是否输出结构化 JSON |
 | `LOG_INCLUDE_CONTEXT` | `true` | 是否通过 CLS 给所有日志附带 `requestId` |
 | `LOG_SLOW_REQUEST_THRESHOLD` | `1000` | 慢请求阈值（毫秒），超阈值追加 `[SLOW]` |
-| `LOG_OUTPUT` | `both` | `console` \| `file` \| `both` |
+| `LOG_OUTPUT` | `console` | `console` \| `file` |
 | `LOG_DIR` | `logs` | 日志目录（文件输出时自动创建） |
 | `LOG_MAX_FILE_SIZE` | `10` | 单个日志文件上限（MB） |
 | `LOG_MAX_FILES` | `7` | 轮转文件保留数量（`0` = 不限制） |
@@ -38,7 +38,7 @@
 
 ### 文件输出
 
-`LOG_OUTPUT` 为 `file` 或 `both` 时按大小轮转，`error` 级别单独落盘：
+`LOG_OUTPUT` 为 `file` 时按大小轮转，`error` 级别单独落盘：
 
 ```
 logs/
@@ -131,7 +131,7 @@ this.logger.debug(`callback ${sanitizeUrl(req.url)}`);
 
 ### 日志没有输出到文件
 
-1. 确认 `LOG_OUTPUT` 为 `file` 或 `both`。
+1. 确认 `LOG_OUTPUT` 为 `file`。
 2. 确认 `LOG_DIR` 有写权限（模块会自动 `mkdir`）。
 3. **确认 `transport` 写在 `pinoHttp` 内部**——写在外层会被 nestjs-pino 忽略。
 

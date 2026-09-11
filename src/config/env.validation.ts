@@ -81,7 +81,7 @@ export const validationSchema = Joi.object({
   LOG_JSON_FORMAT: Joi.string().valid('true', 'false'),
   LOG_INCLUDE_CONTEXT: Joi.string().valid('true', 'false'),
   LOG_SLOW_REQUEST_THRESHOLD: Joi.number().integer().min(100).default(1000),
-  LOG_OUTPUT: Joi.string().valid('console', 'file', 'both').default('both'),
+  LOG_OUTPUT: Joi.string().valid('console', 'file').default('console'),
   LOG_DIR: Joi.string().default('logs'),
   LOG_MAX_FILE_SIZE: Joi.number().integer().min(1).default(10),
   LOG_MAX_FILES: Joi.number().integer().min(0).default(7),

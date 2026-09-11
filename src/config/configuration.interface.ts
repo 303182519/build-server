@@ -110,9 +110,9 @@ export interface LoggerConfig {
   includeContext: boolean;
   /** 慢请求阈值（毫秒），超过此值的请求标记为 warn */
   slowRequestThreshold: number;
-  /** 日志输出目标：console = 控制台，file = 文件，both = 两者 */
-  output?: 'console' | 'file' | 'both';
-  /** 日志文件目录（仅在 file 或 both 模式下生效） */
+  /** 日志输出目标：console = 控制台，file = 文件 */
+  output?: 'console' | 'file';
+  /** 日志文件目录（仅在 file 模式下生效） */
   logDir?: string;
   /** 单个日志文件最大大小（MB），超过后自动轮转 */
   maxFileSize?: number;
