@@ -12,12 +12,14 @@ import { HealthModule } from './shared/health/health.module';
 import { CommonModule } from './common/common.module';
 // import { PostsModule } from './modules/posts/posts.module';
 import { JobsModule } from './shared/jobs/jobs.module';
+import { LoggerModule } from './shared/logger/logger.module';
 
 import { modules } from './modules';
 @Module({
   imports: [
     AppConfigModule,
     CommonModule,
+    LoggerModule,
     PrismaModule,
     RedisCacheModule,
     JobsModule,

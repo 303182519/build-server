@@ -73,4 +73,17 @@ export const validationSchema = Joi.object({
   S3_ACCESS_KEY_ID: Joi.string().allow(''),
   S3_SECRET_ACCESS_KEY: Joi.string().allow(''),
   S3_PUBLIC_BASE_URL: Joi.string().allow(''),
-}).oxor('REDIS_URL', 'REDIS_HOST'); // Redis 连接二选一，也可都不提供
+
+  // Pino Logger (日志)
+  LOG_LEVEL: Joi.string()
+    .valid('trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent')
+    .default('info'),
+  LOG_JSON_FORMAT: Joi.string().valid('true', 'false'),
+  LOG_INCLUDE_CONTEXT: Joi.string().valid('true', 'false'),
+  LOG_SLOW_REQUEST_THRESHOLD: Joi.number().integer().min(100).default(1000),
+  LOG_OUTPUT: Joi.string().valid('console', 'file', 'both').default('both'),
+  LOG_DIR: Joi.string().default('logs'),
+  LOG_MAX_FILE_SIZE: Joi.number().integer().min(1).default(10),
+  LOG_MAX_FILES: Joi.number().integer().min(0).default(7),
+  LOG_COMPRESS_OLD_FILES: Joi.string().valid('true', 'false'),
+}).oxor('REDIS_URL', 'REDIS_HOST'); // Redis 连接二选一,也可都不提供

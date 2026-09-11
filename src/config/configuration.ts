@@ -1,7 +1,11 @@
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { merge } from 'es-toolkit';
-import { AppConfig, AppConfigForced } from './configuration.interface';
+import {
+  AppConfig,
+  AppConfigForced,
+  LoggerConfig,
+} from './configuration.interface';
 
 /**
  * 通过 configService 获取配置
@@ -33,4 +37,29 @@ export const getAppConfig = (app: INestApplication) => {
   const configService = app.get(ConfigService);
 
   return getConfig(configService);
+};
+
+/**
+ * 获取日志配置（带默认值）
+ * @param configService 配置服务
+ * @returns 日志配置
+ */
+export const getLoggerConfig = (
+  configService: ConfigService,
+): Required<LoggerConfig> => {
+  const appConfig = getConfig(configService);
+  const loggerConfig = appConfig.logger || {};
+
+  return {
+    level: loggerConfig.level || 'info',
+    jsonFormat:
+      loggerConfig.jsonFormat ?? process.env.NODE_ENV === 'production',
+    includeContext: loggerConfig.includeContext ?? true,
+    slowRequestThreshold: loggerConfig.slowRequestThreshold || 1000,
+    output: loggerConfig.output || 'both',
+    logDir: loggerConfig.logDir || 'logs',
+    maxFileSize: loggerConfig.maxFileSize || 10,
+    maxFiles: loggerConfig.maxFiles || 7,
+    compressOldFiles: loggerConfig.compressOldFiles ?? true,
+  };
 };

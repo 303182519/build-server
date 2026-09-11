@@ -101,6 +101,27 @@ export interface BoardConfig {
   readOnly: boolean;
 }
 
+export interface LoggerConfig {
+  /** 日志级别：trace < debug < info < warn < error < fatal */
+  level?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal' | 'silent';
+  /** 是否启用结构化 JSON 日志（生产环境推荐 true） */
+  jsonFormat: boolean;
+  /** 是否包含请求上下文信息（requestId, userId 等） */
+  includeContext: boolean;
+  /** 慢请求阈值（毫秒），超过此值的请求标记为 warn */
+  slowRequestThreshold: number;
+  /** 日志输出目标：console = 控制台，file = 文件，both = 两者 */
+  output?: 'console' | 'file' | 'both';
+  /** 日志文件目录（仅在 file 或 both 模式下生效） */
+  logDir?: string;
+  /** 单个日志文件最大大小（MB），超过后自动轮转 */
+  maxFileSize?: number;
+  /** 保留的日志文件数量（0 = 不限制） */
+  maxFiles?: number;
+  /** 是否压缩轮转后的日志文件 */
+  compressOldFiles?: boolean;
+}
+
 export interface AppConfig {
   server?: ServerConfig;
   swagger?: SwaggerConfig;
@@ -114,6 +135,7 @@ export interface AppConfig {
   storage?: StorageConfig;
   upload?: UploadConfig;
   s3?: S3Config;
+  logger?: LoggerConfig;
 }
 
 export type AppConfigForced = {

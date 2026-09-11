@@ -1,11 +1,12 @@
 import { NestFactory } from '@nestjs/core';
-import { Logger, VersioningType } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { getAppConfig } from './config/configuration';
 import { useSwagger } from './shared/utils/swagger';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { initSnowflake } from './shared/utils/snowflake';
 import { JobBoardService } from './shared/jobs/board/job-board.service';
+import { Logger as PinoLogger } from 'nestjs-pino';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);

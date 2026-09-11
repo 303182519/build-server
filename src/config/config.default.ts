@@ -1,5 +1,5 @@
 import { registerAs } from '@nestjs/config';
-import { AppConfig } from './configuration.interface';
+import { AppConfig, LoggerConfig } from './configuration.interface';
 
 const parseNumberEnv = (
   value: string | undefined,
@@ -90,5 +90,19 @@ export const defaultConfig = registerAs('default', (): AppConfig => ({
     accessKeyId: process.env.S3_ACCESS_KEY_ID || undefined,
     secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || undefined,
     publicBaseUrl: process.env.S3_PUBLIC_BASE_URL || undefined,
+  },
+  logger: {
+    level: (process.env.LOG_LEVEL as LoggerConfig['level']) || 'info',
+    jsonFormat: process.env.LOG_JSON_FORMAT === 'true',
+    includeContext: process.env.LOG_INCLUDE_CONTEXT !== 'false',
+    slowRequestThreshold: parseNumberEnv(
+      process.env.LOG_SLOW_REQUEST_THRESHOLD,
+      1000,
+    ),
+    output: (process.env.LOG_OUTPUT as LoggerConfig['output']) || 'both',
+    logDir: process.env.LOG_DIR || 'logs',
+    maxFileSize: parseNumberEnv(process.env.LOG_MAX_FILE_SIZE, 10),
+    maxFiles: parseNumberEnv(process.env.LOG_MAX_FILES, 7),
+    compressOldFiles: process.env.LOG_COMPRESS_OLD_FILES !== 'false',
   },
 }));
