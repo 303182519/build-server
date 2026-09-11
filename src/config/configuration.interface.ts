@@ -104,8 +104,6 @@ export interface BoardConfig {
 export interface LoggerConfig {
   /** 日志级别：trace < debug < info < warn < error < fatal */
   level?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal' | 'silent';
-  /** 是否启用结构化 JSON 日志（生产环境推荐 true） */
-  jsonFormat: boolean;
   /** 是否包含请求上下文信息（requestId, userId 等） */
   includeContext: boolean;
   /** 慢请求阈值（毫秒），超过此值的请求标记为 warn */

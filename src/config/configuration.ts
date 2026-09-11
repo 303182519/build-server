@@ -52,8 +52,6 @@ export const getLoggerConfig = (
 
   return {
     level: loggerConfig.level || 'info',
-    jsonFormat:
-      loggerConfig.jsonFormat ?? process.env.NODE_ENV === 'production',
     includeContext: loggerConfig.includeContext ?? true,
     slowRequestThreshold: loggerConfig.slowRequestThreshold || 1000,
     output: loggerConfig.output || 'console',

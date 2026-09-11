@@ -71,12 +71,7 @@ function isHealthProbe(url: string | undefined): boolean {
         const targets: PinoTransportTargets = [];
 
         if (wantConsole) {
-          // pino-pretty 只服务于本地开发的人类可读输出，因此它的依赖被放在 devDependencies，
-          // 生产镜像（pnpm install --prod）里根本不存在这个包。这里必须用 IsDev 严格收敛而不是
-          // 「非生产即美化」：staging / test / 未设 NODE_ENV 的环境一旦走到 pino-pretty 分支，
-          // 就会因模块缺失在首个日志写入时启动即崩。非开发环境一律输出 stdout 结构化 JSON，
-          // 交给采集链路解析。
-          if (IsDev && !loggerConfig.jsonFormat) {
+          if (IsDev) {
             targets.push({
               target: 'pino-pretty',
               options: {

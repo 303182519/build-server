@@ -93,11 +93,6 @@ export const defaultConfig = registerAs('default', (): AppConfig => ({
   },
   logger: {
     level: (process.env.LOG_LEVEL as LoggerConfig['level']) || 'info',
-    // 未显式配置时按运行环境取值（生产默认 JSON），作为 jsonFormat 的唯一真相源
-    jsonFormat:
-      process.env.LOG_JSON_FORMAT !== undefined
-        ? process.env.LOG_JSON_FORMAT === 'true'
-        : process.env.NODE_ENV === 'production',
     includeContext: process.env.LOG_INCLUDE_CONTEXT !== 'false',
     slowRequestThreshold: parseNumberEnv(
       process.env.LOG_SLOW_REQUEST_THRESHOLD,
