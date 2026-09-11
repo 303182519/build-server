@@ -21,9 +21,9 @@
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `LOG_LEVEL` | `info` | trace < debug < info < warn < error < fatal < silent |
+| `LOG_OUTPUT` | `console` | `console` \| `file`（物理机 / 虚拟机裸机部署（非容器），才需要 file） |
 | `LOG_INCLUDE_CONTEXT` | `true` | 是否通过 CLS 给所有日志附带 `requestId` / `bizCode` |
 | `LOG_SLOW_REQUEST_THRESHOLD` | `500` | 慢请求阈值（毫秒），超阈值追加 `[SLOW]` |
-| `LOG_OUTPUT` | `console` | `console` \| `file` |
 | `LOG_DIR` | `logs` | 日志目录（文件输出时自动创建） |
 | `LOG_MAX_FILE_SIZE` | `10` | 单个日志文件上限（MB） |
 | `LOG_MAX_FILES` | `7` | 轮转文件保留数量（`0` = 不限制） |
@@ -253,10 +253,16 @@ pnpm start:dev
 > 两个时点调用（无 `customReceivedLogLevel` 选项），必须显式区分两个时点，否则到达日志会被
 > 判成 `warn`。
 
-### 请求被客户端中断后没有访问日志
+### 请求被客户端中断后的访问日志（级别 warn）
 
-`pino-http` 会在 `finish` **和** `close` 时产出日志；被中断的请求
-（`res.writableEnded === false`）会被 `customLogLevel` 提升到 `warn` 级别，便于排查。
+被客户端中断的请求**依然会**产出访问日志，不用担心它从日志里消失：`pino-http` 除了在
+`finish`（响应正常写完）时产出，还会在 `close`（连接关闭）时产出，两者共用同一个处理函数
+且只记一条。中断请求的特征是 `res.writableEnded === false`（服务端没来得及调用 `res.end()`），
+会被 `customLogLevel` 提升到 `warn` 级别，便于排查。
+
+> ⚠️ 因此 `warn` **不严格等于 4xx**：这类「客户端中断」的日志状态码可能是 2xx。
+> 按 `level=warn` 配置告警时需要容忍这一类；排查时看到耗时偏小、不带 `[SLOW]`、
+> 也不是 4xx 的 warn 行，应优先理解为客户端断开 / 超时，而非服务端故障。
 
 ## 相关资源
 
