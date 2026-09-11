@@ -126,9 +126,12 @@ function isHealthProbe(url: string | undefined): boolean {
 
         const pinoHttp: PinoHttpOptions = {
           level: loggerConfig.level,
-          formatters: {
-            level: (label: string) => ({ level: label.toUpperCase() }),
-          },
+          // 不能自定义 level 格式化：pino 的 normalizeArgs 明确禁止
+          // 「transport.targets 数组 + formatters.level 函数」的组合，命中即抛
+          // "option.transport.targets do not allow custom level formatters" 导致进程启动失败。
+          // 本模块为了同时输出 console / 全量文件 / 仅 error 文件，必须使用 targets 多路输出，
+          // 因此这里只能用 pino 默认的数字级别（30/40/50…）。
+          // 开发控制台由 pino-pretty 渲染成 INFO/ERROR 标签，采集侧按 pino 标准数字级别解析。
           // 兜底脱敏：即使业务代码误把请求/凭证对象交给 logger，也不会明文落盘
           redact: {
             paths: [

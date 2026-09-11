@@ -154,6 +154,50 @@ this.logger.debug(`callback ${sanitizeUrl(req.url)}`);
 若 `NODE_ENV` 不是 `production`，控制台会走 `pino/file` 输出 JSON 而不是 `pino-pretty`，
 两者都是 JSON，但注意 `pino-pretty` 仅在开发环境下启用。
 
+### 启动报错 `option.transport.targets do not allow custom level formatters`
+
+这是 pino `normalizeArgs` 的硬性约束：只要用了 `transport.targets` 数组多路输出，
+就**不允许**再传 `formatters.level` 函数（pino 无法把该函数传给 worker 线程）。
+
+本模块为了同时输出「console + 全量文件 + 仅 error 文件」必须使用 targets，
+因此 `level` 保持 pino 默认的**数字级别**（`10/20/30/40/50/60`）：
+
+- 开发控制台：`pino-pretty` 仍会渲染成 `INFO` / `ERROR` 等标签，肉眼体验不变。
+- JSON（生产 stdout / `app.log`）：`"level":30` 这种数字是 pino 标准格式，
+  采集链路按数字级别解析即可，不要依赖大写字符串。
+- `error.log` 的级别过滤依赖 target 层的 `level: 'error'`（字符串），与输出字段无关。
+
+### Windows 控制台中文乱码（形如 `宸茶繛鎺`）
+
+**这是终端代码页问题，不是日志内容问题**，应用侧无需（也不应）改动。
+
+根因链条：
+
+1. 日志由 transport **worker 线程**产出：worker 用 `StringDecoder('utf8')` 还原出正确的
+   JS 字符串，再交给目标流（`pino-pretty` / `pino/file`，底层均为 sonic-boom）。
+2. sonic-boom 把字符串按 **UTF-8 字节**直接写到 fd 1，绕过 Windows 的 `WriteConsoleW`。
+3. Windows 控制台默认代码页是 936（GBK），于是把 UTF-8 字节按 GBK 解码，得到
+   `已连接` → `宸茶繛鎺?`（尾部落单字节被显示为 `?`）。
+
+这也解释了为什么 `console.log('中文')` 正常、只有日志乱码：主线程写 stdout 走
+`uv_tty` → `WriteConsoleW`（UTF-16），与代码页无关；worker 线程是裸字节写 fd。
+
+解决（任选其一，推荐第 1 条）：
+
+```powershell
+# 1. 启动前把当前控制台切到 UTF-8（PowerShell / cmd 均可，只需执行一次）
+chcp 65001
+pnpm start:dev
+
+# 2. 系统级：设置 → 时间和语言 → 语言和区域 → 管理语言设置 →
+#    更改系统区域设置 → 勾选「Beta: 使用 Unicode UTF-8 提供全球语言支持」（需重启）
+```
+
+> ⚠️ 不要试图把日志输出改成 GBK 来迁就控制台：pino 没有编码开关，且生产是 Linux
+> 容器（UTF-8），改编码只会把生产日志一起弄坏。
+> 文件输出（`app.log` / `error.log`）始终是 UTF-8，用编辑器打开中文正常，
+> 说明落盘数据本身没有问题。
+
 ### 请求被客户端中断后没有访问日志
 
 `pino-http` 会在 `finish` **和** `close` 时产出日志；被中断的请求
