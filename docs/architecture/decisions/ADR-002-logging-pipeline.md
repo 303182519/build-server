@@ -43,6 +43,9 @@
    **target 层 `level: 'error'`** 单独落盘。应用内不做 gzip 压缩。
 5. **脱敏**：`pinoHttp.redact` 覆盖请求头凭证与常见敏感字段；新增
    `sanitizeUrl()` 对 URL 的敏感查询参数（token/code/ticket/signature…）脱敏。
+   脱敏路径必须按 access log 的**顶层键名**书写（`customAttributeKeys` 已把请求 / 响应重命名为
+   `request` / `response`），并统一使用 `*.` 通配前缀 —— `req.` / `res.` 前缀永远无法命中
+   （详见「决策」第 10 条）。
 6. **健康探针**：`autoLogging.ignore` 过滤 `/api/health`、`/api/health/ready`。
 7. **请求上下文字段**：`requestId` 与 `bizCode` 统一由 `pinoHttp.mixin` 读取 CLS 注入
    **顶层**，全链路只保留这一条字段路径。`req` 序列化器不再输出 `request.requestId`
@@ -52,6 +55,17 @@
    注入访问日志），**不再单独产出 4xx 日志**；仅 5xx 额外产出一条 error 日志承载异常堆栈。
 9. **异常序列化**：`serializers` 显式注册 `err: stdSerializers.err`。pino 默认不序列化
    `Error` 实例，缺失该注册时 `{ err: exception }` 会落成 `{}`，导致 5xx 的 message / stack 丢失。
+10. **访问日志请求头白名单**：`req` 序列化器只输出 `method` / `url` / `userAgent` / `contentType`
+    四个字段，**不整包输出 `req.headers`**。规范化后的请求对象确实含 `headers`，但：请求头里
+    绝大多数内容是凭证（`authorization` / `cookie` / `x-api-key`）或 PII；`cookie` 常有 KB 级体积，
+    而访问日志是最高频日志，单条增量 × 日均请求量直接决定存储与采集成本；`user-agent` / `referer`
+    基数极高，作为可检索字段会撑大索引且对告警几乎没有价值；请求头完全由客户端控制，属不可信输入。
+    `referer` 亦不记入 —— 它可能携带一次性凭据，而 `sanitizeUrl()` 只覆盖 query，path 段无法脱敏，
+    收益低于风险。
+    与之配套，`redact` 中的请求头路径改用 `*.headers.*` 通配前缀：既修正了原先失效的 `req.` / `res.`
+    前缀，也不再为 `request` / `response` 这两个顶层键单独生成脱敏 stringifier —— pino 的脱敏
+    stringifier 按**顶层键**选取，`*.` 前缀统一由 wildcardFirst stringifier 处理；混用具体前缀与
+    通配前缀时二者的优先关系属于实现细节，不应依赖。
 
 **备选方案**
 
@@ -67,13 +81,19 @@
 未选用原因：`pino-roll` 由 pino 生态维护者维护，采用度更高；压缩交由
 logrotate / 采集 Agent / 容器日志驱动更符合容器化最佳实践，且不占用应用 CPU/IO。
 
+**访问日志整体输出 `req.headers`**
+未选用原因：请求头中大量字段属凭证 / PII（`authorization` / `cookie` / `x-api-key`），
+`cookie` 常有 KB 级体积而访问日志是最高频日志，`user-agent` / `referer` 基数极高会撑大检索索引，
+且请求头是客户端可控的不可信输入。改由白名单显式列举（见「决策」第 10 条），
+并以结构化字段而非原始对象承载。
+
 **影响后果**
 
 收益：
 
 - 同一条请求只产生一条访问日志，统计口径唯一；
 - 文件日志、轮转、级别过滤、生产 JSON 真正生效；
-- URL 凭证与请求头凭证不再明文落盘；
+- URL 凭证与请求头凭证不再明文落盘（访问日志只输出请求头白名单，`redact` 的请求头路径亦已修正为可命中的形式）；
 - 全量日志（含业务 `new Logger()`）进入同一采集链路。
 
 成本：
@@ -101,6 +121,10 @@ logrotate / 采集 Agent / 容器日志驱动更符合容器化最佳实践，�
   异常堆栈 `err` 只出现在 5xx 错误日志；
 - 应用日志禁止使用 `request` / `response` 作为键名 —— 这两个键已被 pino-http 的序列化器占用
   （`customAttributeKeys`），值会被 `pino-std-serializers` 的内置序列化器二次处理；
+- 访问日志的请求头只允许输出白名单字段（当前为 `userAgent` / `contentType`），
+  禁止把 `req.headers` 整体塞进日志；新增字段需同步更新本节与 logger README 的字段契约表；
+- `redact.paths` 必须使用 access log 的**顶层键名**，并统一使用 `*.` 通配前缀
+  （`req.headers.*` / `res.headers.*` 永远命中不到；`request.` 这类具体前缀会与 `*.xxx` 通配路径混用）；
 - 预期内的 4xx 不得再新增第二条日志（响应结束的那条访问日志即为权威记录）。
 
 **验证方式**
@@ -114,7 +138,10 @@ logrotate / 采集 Agent / 容器日志驱动更符合容器化最佳实践，�
 5. `logs/error.log` 中不存在 info/warn 级别日志；
 6. 请求 `/api/health` 不产生访问日志；
 7. 请求 `?ticket=xxx` → 落盘日志中该值显示为 `[REDACTED]`；
-8. 业务 `new Logger().log()` 的输出出现在 pino 日志中（含 requestId）。
+8. 业务 `new Logger().log()` 的输出出现在 pino 日志中（含 requestId）；
+9. 带 `Authorization` / `Cookie` / `X-Api-Key` 请求头的请求 → 落盘日志中**不出现**这些原始值，
+   访问日志含 `request.userAgent` / `request.contentType` 且**不含** `request.headers`；
+10. 把 `{ headers: req.headers }` 之类对象交给 logger → 其中 `authorization` / `cookie` 落为 `[REDACTED]`。
 
 **日期**
 2026-09-11
@@ -148,3 +175,19 @@ logrotate / 采集 Agent / 容器日志驱动更符合容器化最佳实践，�
   失去顶层 `requestId` 与 `bizCode`（4xx 业务语义随之丢失），已在 logger README 中标注。
   未做（另需前置决策）：`clientIp` / `userAgent`（需先确定 trust proxy 层数）、
   `env` / `service.version`（需确定版本来源）、`traceId`（需引入 OpenTelemetry）。
+- **2026-09-11**：修正脱敏路径失效，并为访问日志增加请求头白名单（新增「决策」第 10 条）。
+  起因：核查 `req` 序列化器时发现 `redact.paths` 中的 `req.headers.authorization` /
+  `req.headers.cookie` / `res.headers["set-cookie"]` **从未生效** —— `customAttributeKeys` 已把
+  pino-http 的绑定键改成 `request` / `response`，而 pino 的脱敏 stringifier 按顶层键选取，
+  这三条路径永远匹配不到。此前之所以没有泄露，只是因为 `req` 序列化器压根没输出 headers，
+  属「配置写了但等于没写」的虚假安全感（一旦有人按「有 redact 兜底」的直觉补上 `headers`，
+  凭证会明文落盘）。
+  变更：① 路径改为 `*.headers.authorization` / `*.headers.cookie` / `*.headers["set-cookie"]`
+  —— 用 `*.` 统一前缀而非 `request.` / `response.`，既避免为这两个顶层键单独生成 stringifier
+  而与已有 `*.xxx` 通配路径产生依赖实现细节的优先关系，也顺带覆盖任何「误把 headers 放进日志对象」
+  的场景；② `req` 序列化器的白名单补上 `userAgent` / `contentType`（`referer` 因 `sanitizeUrl()`
+  不覆盖 path 段、可能残留一次性凭据而明确排除）；③ logger README 新增「访问日志的请求头白名单」
+  小节，修正脱敏章节的失效描述，并新增「脱敏不生效」故障排查条目。
+  影响：访问日志每条新增 `request.userAgent` / `request.contentType` 两个字段（低基数、纯文本，
+  不建议建索引）；单条日志体积随 UA 长度小幅增长，需计入容量评估。
+  未做：`clientIp`（仍待 trust proxy 层数决策）；`referer`（见上）。

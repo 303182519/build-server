@@ -32,6 +32,18 @@ type PinoTransportTarget = Extract<
 
 type PinoTransportTargets = PinoTransportTarget[];
 
+/**
+ * pino-http 的 `wrapRequestSerializer` 会先跑 pino-std-serializers 的 `reqSerializer`，
+ * 再把「规范化后的对象」交给自定义序列化器，因此这里拿到的并不是原始 `IncomingMessage`
+ * （实际含 id / method / url / query / params / headers / remoteAddress / remotePort，
+ * 其中 `headers` 即原始请求头）。这里只声明真正读取的字段，避免对类型撒谎。
+ */
+interface NormalizedRequest {
+  method?: string;
+  url?: string;
+  headers?: Record<string, string | string[] | undefined>;
+}
+
 /** 健康探针路径：不进访问日志（会被高频调用，日志量没价值） */
 const HEALTH_PATHS = new Set([
   '/api/health',
@@ -71,18 +83,18 @@ function isHealthProbe(url: string | undefined): boolean {
         const targets: PinoTransportTargets = [];
 
         if (wantConsole) {
-          if (IsDev) {
-            targets.push({
-              target: 'pino-pretty',
-              options: {
-                colorize: true,
-                translateTime: 'SYS:standard',
-                ignore: 'pid,hostname',
-              },
-            });
-          } else {
-            targets.push({ target: 'pino/file', options: { destination: 1 } });
-          }
+          // if (IsDev) {
+          //   targets.push({
+          //     target: 'pino-pretty',
+          //     options: {
+          //       colorize: true,
+          //       translateTime: 'SYS:standard',
+          //       ignore: 'pid,hostname',
+          //     },
+          //   });
+          // } else {
+          targets.push({ target: 'pino/file', options: { destination: 1 } });
+          //}
         }
 
         if (wantFile) {
@@ -132,12 +144,20 @@ function isHealthProbe(url: string | undefined): boolean {
           // 本模块为了同时输出 console / 全量文件 / 仅 error 文件，必须使用 targets 多路输出，
           // 因此这里只能用 pino 默认的数字级别（30/40/50…）。
           // 开发控制台由 pino-pretty 渲染成 INFO/ERROR 标签，采集侧按 pino 标准数字级别解析。
-          // 兜底脱敏：即使业务代码误把请求/凭证对象交给 logger，也不会明文落盘
+          // 兜底脱敏：即使业务代码误把请求/凭证对象交给 logger，也不会明文落盘。
+          //
+          // 路径必须按 access log 的「顶层键名」书写：customAttributeKeys 已把请求/响应对象
+          // 重命名为 request / response，所以 `req.headers.*` / `res.headers.*` 这类路径
+          // **永远不会命中**（踩坑点）。这里统一用 `*.` 通配前缀，而不是 `request.` / `response.`：
+          // 1）pino 按顶层键选取脱敏 stringifier，`request.` 这类具体前缀会为 `request` 键单独
+          //    生成一个 stringifier，它与已有的 `*.xxx` 通配路径之间的优先关系属于实现细节；
+          //    而 `*.` 前缀统一由 pino 的 wildcardFirst stringifier 处理，语义稳定；
+          // 2）`*.headers.*` 能覆盖任何「误把 headers 放进日志对象」的场景，而不只是 pino-http 的绑定。
           redact: {
             paths: [
-              'req.headers.authorization',
-              'req.headers.cookie',
-              'res.headers["set-cookie"]',
+              '*.headers.authorization',
+              '*.headers.cookie',
+              '*.headers["set-cookie"]',
               '*.password',
               '*.passwd',
               '*.secret',
@@ -196,16 +216,26 @@ function isHealthProbe(url: string | undefined): boolean {
             responseTime: 'responseTime',
           },
           serializers: {
-            // 注意：pino-http 的 wrapRequestSerializer 会先跑内置序列化器，再把「规范化后的
-            // 对象」交给这里，因此这里拿到的不一定是原始 IncomingMessage——只读取
-            // pino-std-serializers 保证存在的 method / url 两个字段，不要依赖 headers 等。
+            // 只输出白名单字段（见 ADR-002 决策第 10 条）。规范化对象虽然含 headers，但请求头里
+            // 绝大多数内容是凭证 / PII，且 Cookie 常有 KB 级体积，整包落盘会同时带来泄露风险与
+            // 存储成本。这里只取「排障价值高、基数可控、不含凭据」的两项：
+            // - user-agent：客户端 / 版本 / 爬虫识别；
+            // - content-type：400 / 415 之类报文异常的排查依据。
+            // referer 故意不记：它可能携带一次性凭据，而 sanitizeUrl() 只覆盖 query，path 段
+            // 无法脱敏，收益低于风险。
             //
             // requestId 不在这里输出：全链路只保留顶层 `requestId`（由 mixin 从 CLS 注入，
             // 见下方），避免同一维度出现「request.requestId」与顶层「requestId」两条字段路径。
-            req: (req: IncomingMessage) => ({
-              method: req.method,
-              url: sanitizeUrl(req.url ?? ''),
-            }),
+            // x-request-id 同理，已由 genReqId + mixin 落在顶层 requestId 上。
+            req: (req: NormalizedRequest) => {
+              const headers = req.headers ?? {};
+              return {
+                method: req.method,
+                url: sanitizeUrl(req.url ?? ''),
+                userAgent: headers['user-agent'],
+                contentType: headers['content-type'],
+              };
+            },
             res: (res: ServerResponse) => ({
               statusCode: res.statusCode,
             }),

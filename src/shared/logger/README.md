@@ -132,6 +132,7 @@ export class UserService {
 | HTTP 方法 / 路径 | `request.method` / `request.url` | **仅**访问日志 |
 | HTTP 状态码 | `response.statusCode` | **仅**访问日志 |
 | 耗时 | `responseTime` | **仅**访问日志 |
+| 客户端 UA / 报文类型 | `request.userAgent` / `request.contentType` | **仅**访问日志（请求头白名单，见下） |
 | 异常堆栈 | 顶层 `err`（`{ type, message, stack }`） | **仅** 5xx 错误日志 |
 | 日志来源 | `context` | 应用日志（如 `GlobalExceptionsFilter`） |
 
@@ -143,6 +144,26 @@ export class UserService {
 2. **5xx 额外记一条 error 日志**：被异常过滤器捕获的异常不会流经 `pino-http`，堆栈只能在那里保留。
    该日志不重复 HTTP 维度，靠顶层 `requestId` 与访问日志关联。
 
+### 访问日志的请求头白名单
+
+访问日志**只输出两个请求头**，其余一律不落盘：
+
+| 请求头 | 输出字段 | 用途 |
+| --- | --- | --- |
+| `user-agent` | `request.userAgent` | 客户端 / 版本 / 爬虫识别 |
+| `content-type` | `request.contentType` | 400 / 415 等报文异常排查 |
+
+**不要改成 `req.headers` 整体输出**，原因：
+
+- 请求头里绝大多数内容是凭证（`authorization` / `cookie` / `x-api-key`）或 PII；
+- `cookie` 常有 KB 级体积，而访问日志是最高频日志，单条增量 × 日均请求量直接决定存储与采集成本；
+- `user-agent` / `referer` 基数极高，作为可检索字段会撑大索引，对告警几乎没有价值；
+- 请求头完全由客户端控制，属不可信输入，是下游解析器的投毒面。
+
+`referer` 同样不记：它可能携带一次性凭据，而 `sanitizeUrl()` **只覆盖 query**，path 段无法脱敏，
+收益低于风险。`x-request-id` 也不必在此重复输出——它已由 `genReqId` + `mixin` 落在顶层 `requestId`。
+需要新增字段时按「更新本表 + 更新 ADR-002」的流程走。
+
 > ⚠️ 异常过滤器用 `{ err: exception }` 记录异常：`pino` 默认**不**序列化 `Error`，模块已在
 > `serializers` 注册 `err: stdSerializers.err`；不注册时 `err` 会落成 `{}`，message / stack 全丢。
 >
@@ -152,8 +173,13 @@ export class UserService {
 
 ## 安全：日志脱敏
 
-1. **请求头凭证**：`pinoHttp.redact` 已内置 `authorization`、`cookie`、`set-cookie`，
-   以及 `password / secret / token / accessToken / refreshToken / apiKey` 等常见字段，统一替换为 `[REDACTED]`。
+1. **请求头凭证**：`pinoHttp.redact` 覆盖 `authorization` / `cookie` / `set-cookie`，以及
+   `password / secret / token / accessToken / refreshToken / apiKey` 等常见字段，统一替换为 `[REDACTED]`。
+   ⚠️ 路径必须按 access log 的**顶层键名**书写：pino-http 已通过 `customAttributeKeys` 把请求 / 响应
+   对象重命名为 `request` / `response`，因此配置统一使用 `*.headers.authorization` 这类 `*.` 通配前缀——
+   写成 `req.headers.authorization` / `res.headers[...]` **永远不会命中**（曾经就是这么配的，属死配置）。
+   注意这只是一层**兜底**：访问日志本身只输出请求头白名单（见「日志字段契约」），
+   绝大多数请求头根本不会进入日志。
 2. **URL 查询参数**：`sanitizeUrl()`（`log-sanitizer.ts`）会在写日志前脱敏
    `token / code / ticket / signature / apiKey ...` 等敏感 query 参数，
    覆盖 OAuth 回调 ticket 之类的场景。
@@ -263,6 +289,18 @@ pnpm start:dev
 > ⚠️ 因此 `warn` **不严格等于 4xx**：这类「客户端中断」的日志状态码可能是 2xx。
 > 按 `level=warn` 配置告警时需要容忍这一类；排查时看到耗时偏小、不带 `[SLOW]`、
 > 也不是 4xx 的 warn 行，应优先理解为客户端断开 / 超时，而非服务端故障。
+
+### 脱敏不生效 / 日志里出现明文凭证
+
+先确认字段是否真的进了日志：访问日志只输出请求头白名单（`request.userAgent` / `request.contentType`），
+`authorization` / `cookie` 正常情况下**不会出现**。若确实出现明文，按以下顺序排查：
+
+1. **`redact.paths` 用了 `req.` / `res.` 前缀**。pino-http 已把顶层键改名为 `request` / `response`，
+   这类路径永远匹配不到，必须写 `*.headers.authorization`（`*.` 前缀由 pino 的 wildcardFirst
+   stringifier 统一处理，语义稳定）。
+2. **把值拼进了 message 字符串**。pino 的脱敏只作用于日志对象的**字段路径**，不覆盖消息文本：
+   `logger.info(\`token=${t}\`)` 不会被脱敏，必须作为结构化字段传入（`logger.info({ token: t })`）。
+3. **记录 URL / referer 时没走 `sanitizeUrl()`**，query 里的 `token` / `code` / `ticket` 会明文落盘。
 
 ## 相关资源
 

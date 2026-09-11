@@ -31,9 +31,16 @@
   `serializers.request / .response / .error`，**不写 `err`**。pino 默认不序列化 `Error`，因此业务日志
   `{ err: exception }` 必须配合 `serializers.err = stdSerializers.err`，否则落成 `{}`、message/stack 全丢。
 - `pino-std-serializers` 的 `wrapRequestSerializer` / `wrapResponseSerializer` 会**先跑内置序列化器**，再把
-  规范化结果交给自定义序列化器。推论：自定义 req 序列化器只能依赖 `method` / `url`（不要依赖 `headers`）；
-  应用日志**禁止把 `request` / `response` 当键名**（普通对象会被内置 res 序列化器按
-  `headersSent ? statusCode : null` 改写成 `null`）。
+  规范化结果交给自定义序列化器（实现为 `custom(reqSerializer(req))`）。传入对象**确实含自有可枚举的
+  `headers`**（还有 id/query/params/remoteAddress/remotePort），所以「只保证 method/url、headers 不存在」的说法
+  **是错的**（2026-09-11 更正，旧表述来自代码注释的误传）。应用日志**禁止把 `request` / `response` 当键名**
+  （普通对象会被内置 res 序列化器按 `headersSent ? statusCode : null` 改写成 `null`）。
+- **脱敏路径必须用重命名后的键名**（易错，2026-09-11 核实）：pino-http 把请求/响应绑定在
+  `customAttributeKeys.req/res` 指定的键上（项目为 `request` / `response`），序列化器也注册在该键；
+  pino 的 `asChindings`/`_asJson` 是「先跑 serializer，再按**顶层键名**取脱敏 stringifier」，
+  因此 `req.headers.authorization` / `res.headers[...]` 这类路径**恒不生效**，必须写
+  `request.headers.authorization` / `response.headers["set-cookie"]`。当前之所以不泄露，仅因 req 序列化器
+  只输出 `{ method, url }`、未含 headers —— 一旦往里加 headers，凭证会明文落盘（`README.md` 相关说法需同步）。
 - 顶层 `requestId` 的来源是 `pinoHttp.mixin`（CLS），不是 req 序列化器：pino-http 在 `RequestIdMiddleware`
   之前执行，序列化时 `x-request-id` 尚未写入。mixin 在响应 `finish` 时确实能读到 ALS 上下文。
 - **字段契约（单一真相源）**：HTTP 维度（`request.method` / `request.url` / `response.statusCode` /
