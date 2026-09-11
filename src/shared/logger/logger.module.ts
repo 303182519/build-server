@@ -71,18 +71,18 @@ function isHealthProbe(url: string | undefined): boolean {
         const targets: PinoTransportTargets = [];
 
         if (wantConsole) {
-          // if (IsDev) {
-          //   targets.push({
-          //     target: 'pino-pretty',
-          //     options: {
-          //       colorize: true,
-          //       translateTime: 'SYS:standard',
-          //       ignore: 'pid,hostname',
-          //     },
-          //   });
-          // } else {
-          targets.push({ target: 'pino/file', options: { destination: 1 } });
-          // }
+          if (IsDev) {
+            targets.push({
+              target: 'pino-pretty',
+              options: {
+                colorize: true,
+                translateTime: 'SYS:standard',
+                ignore: 'pid,hostname',
+              },
+            });
+          } else {
+            targets.push({ target: 'pino/file', options: { destination: 1 } });
+          }
         }
 
         if (wantFile) {
