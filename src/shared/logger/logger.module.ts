@@ -6,6 +6,7 @@ import type { DestinationStream } from 'pino';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { getLoggerConfig } from '../../config/configuration';
+import { IsDev } from '../../common/constants/environment';
 import { getRequestContext } from '../../common/request-context';
 import { sanitizeUrl } from './log-sanitizer';
 
@@ -63,7 +64,6 @@ function isHealthProbe(url: string | undefined): boolean {
       inject: [ConfigService],
       useFactory: (configService: ConfigService): Params => {
         const loggerConfig = getLoggerConfig(configService);
-        const isProduction = process.env.NODE_ENV === 'production';
 
         const wantConsole = loggerConfig.output === 'console';
         const wantFile = loggerConfig.output === 'file';
@@ -71,19 +71,23 @@ function isHealthProbe(url: string | undefined): boolean {
         const targets: PinoTransportTargets = [];
 
         if (wantConsole) {
-          targets.push(
-            loggerConfig.jsonFormat
-              ? // 采集链路依赖 stdout 的结构化 JSON，不能用 pino-pretty（它会输出人类可读文本）
-                { target: 'pino/file', options: { destination: 1 } }
-              : {
-                  target: 'pino-pretty',
-                  options: {
-                    colorize: !isProduction,
-                    translateTime: 'SYS:standard',
-                    ignore: 'pid,hostname',
-                  },
-                },
-          );
+          // pino-pretty 只服务于本地开发的人类可读输出，因此它的依赖被放在 devDependencies，
+          // 生产镜像（pnpm install --prod）里根本不存在这个包。这里必须用 IsDev 严格收敛而不是
+          // 「非生产即美化」：staging / test / 未设 NODE_ENV 的环境一旦走到 pino-pretty 分支，
+          // 就会因模块缺失在首个日志写入时启动即崩。非开发环境一律输出 stdout 结构化 JSON，
+          // 交给采集链路解析。
+          if (IsDev && !loggerConfig.jsonFormat) {
+            targets.push({
+              target: 'pino-pretty',
+              options: {
+                colorize: true,
+                translateTime: 'SYS:standard',
+                ignore: 'pid,hostname',
+              },
+            });
+          } else {
+            targets.push({ target: 'pino/file', options: { destination: 1 } });
+          }
         }
 
         if (wantFile) {
