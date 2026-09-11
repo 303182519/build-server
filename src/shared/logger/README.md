@@ -23,7 +23,7 @@
 | `LOG_LEVEL` | `info` | trace < debug < info < warn < error < fatal < silent |
 | `LOG_OUTPUT` | `console` | `console` \| `file`（物理机 / 虚拟机裸机部署（非容器），才需要 file） |
 | `LOG_INCLUDE_CONTEXT` | `true` | 是否通过 CLS 给所有日志附带 `requestId` / `bizCode` |
-| `LOG_SLOW_REQUEST_THRESHOLD` | `500` | 慢请求阈值（毫秒），超阈值追加 `[SLOW]` |
+| `LOG_SLOW_REQUEST_THRESHOLD` | `500` | 慢请求阈值（毫秒），超阈值追加 `[SLOW]`（**流式响应 / SSE 不参与判定**，见下） |
 | `LOG_DIR` | `logs` | 日志目录（文件输出时自动创建） |
 | `LOG_MAX_FILE_SIZE` | `10` | 单个日志文件上限（MB） |
 | `LOG_MAX_FILES` | `7` | 轮转文件保留数量（`0` = 不限制） |
@@ -143,7 +143,7 @@ export class UserService {
 | 业务码 | 顶层 `bizCode` | 访问日志（4xx / 5xx 都有）；5xx 错误日志另带一份 |
 | HTTP 方法 / 路径 | `request.method` / `request.url` | **仅**访问日志 |
 | HTTP 状态码 | `response.statusCode` | **仅**访问日志 |
-| 耗时 | `responseTime` | **仅**访问日志 |
+| 耗时 | `responseTime` | **仅**访问日志（流式响应 / SSE 为**连接时长**，不参与 `[SLOW]` 判定） |
 | 客户端 UA / 报文类型 | `request.userAgent` / `request.contentType` | **仅**访问日志（请求头白名单，见下） |
 | 异常堆栈 | 顶层 `err`（`{ type, message, stack }`） | **仅** 5xx 错误日志 |
 | 日志来源 | `context` | 应用日志（如 `GlobalExceptionsFilter`） |
@@ -301,6 +301,22 @@ pnpm start:dev
 > ⚠️ 因此 `warn` **不严格等于 4xx**：这类「客户端中断」的日志状态码可能是 2xx。
 > 按 `level=warn` 配置告警时需要容忍这一类；排查时看到耗时偏小、不带 `[SLOW]`、
 > 也不是 4xx 的 warn 行，应优先理解为客户端断开 / 超时，而非服务端故障。
+
+### SSE / 长连接被标 `[SLOW]`
+
+`responseTime` 对 SSE 是**连接生命周期时长**，不是服务端处理耗时：客户端按设计一直挂着连接，
+因此每次结束都必然超过 `LOG_SLOW_REQUEST_THRESHOLD`；若照常标记，就会产出大量 `[SLOW]`
+（如 `GET /api/jobs/:id/events` 正常断开也是 `200` + `[SLOW]`），把真正的慢请求告警淹没。
+
+因此 `customSuccessMessage` 对流式响应跳过慢请求判定：按响应头
+`Content-Type: text/event-stream` 识别（`isEventStreamResponse()`），**不硬编码路径** ——
+新增 SSE 端点只要正常设置该响应头即自动生效。
+
+> ⚠️ 判定时机：`[SLOW]` 只在**成功路径**（`customSuccessMessage`）判定，5xx / 异常走
+> `customErrorMessage`、本身不带 `[SLOW]`；但**客户端中断**（`res.writableEnded === false`）
+> 只要状态码 < 500 就仍走成功路径，所以「中断且耗时超阈值」的请求会是 `warn` + `[SLOW]`。
+> 另：`responseTime` 字段本身对 SSE 仍保留（它表达连接存活时长，可用于容量观察），
+> 被抑制的只是 `[SLOW]` 标记。
 
 ### 访问日志缺少顶层 `requestId`（长连接 / 手动 `@Res()` 的响应）
 

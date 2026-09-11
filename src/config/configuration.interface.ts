@@ -109,6 +109,9 @@ export interface LoggerConfig {
   /**
    * 慢请求阈值（毫秒）：响应耗时超过此值的请求，访问日志消息追加 `[SLOW]` 标记。
    * 注意：**只作标记，不改变日志级别**——级别仍由状态码 / 中断决定（见 ADR-002）。
+   * 注意：**流式响应（SSE / `Content-Type: text/event-stream`）不参与判定**——其耗时是连接
+   * 生命周期时长而非服务端处理耗时，参与判定会持续产出 `[SLOW]` 噪音
+   * （见 ADR-002 决策第 12 条）。
    * 慢请求告警请在采集侧按 `[SLOW]` / `responseTime` 字段配置，不要复用 warn 级别。
    */
   slowRequestThreshold: number;

@@ -83,6 +83,14 @@
     `RequestContextMiddleware` 的 `run()` 链，只靠 `mixin` 读 CLS 必然取不到 store。
     另外，两处各自 `randomUUID()` 会产出**两个不同**的 id（访问日志与响应头 / 响应体对不上），
     因此必须共用同一解析函数；中间件写回 `req.id` 后，无论两个中间件的执行顺序如何都收敛到同值。
+12. **慢请求标记不适用于流式响应**：`[SLOW]` 只在 `customSuccessMessage` 中按
+    `responseTime > slowRequestThreshold` 追加，而流式响应（SSE）的 `responseTime` 是
+    **连接生命周期时长**、不是服务端处理耗时 —— 客户端按设计长期挂着连接，每次结束都必然超阈值，
+    于是「正常断开」也被标 `[SLOW]`，把真正的慢请求告警淹没（踩坑案例：
+    `GET /api/jobs/:id/events` 200 / `[SLOW]`）。
+    因此按响应头 `Content-Type: text/event-stream` 识别流式响应（`isEventStreamResponse()`）
+    并跳过慢请求判定；**不硬编码路径**，新增 SSE 端点只要正常设置该响应头即自动生效。
+    `responseTime` 字段本身仍保留（表达连接存活时长，可用于容量观察），被抑制的只有 `[SLOW]`。
 
 **备选方案**
 
@@ -152,7 +160,9 @@ logrotate / 采集 Agent / 容器日志驱动更符合容器化最佳实践，�
   顶层 `requestId`；关闭后退回「仅由 mixin 注入」，长连接 / 手动 `@Res()` 的访问日志会丢失 `requestId`
   （见「决策」第 11 条与 logger README 的故障排查条目）；
 - requestId 的生成必须走 `src/common/request-id.ts` 的 `resolveRequestId()`，禁止在中间件或
-  pino 配置里各自生成 id（否则访问日志与响应头 / 响应体的 id 会不一致）。
+  pino 配置里各自生成 id（否则访问日志与响应头 / 响应体的 id 会不一致）；
+- 新增流式端点（SSE）必须设置 `Content-Type: text/event-stream` —— 慢请求标记的豁免依赖该响应头，
+  未设置会退化为「每次断开都被标 `[SLOW]`」（见「决策」第 12 条）。
 
 **验证方式**
 
@@ -171,7 +181,9 @@ logrotate / 采集 Agent / 容器日志驱动更符合容器化最佳实践，�
 10. 把 `{ headers: req.headers }` 之类对象交给 logger → 其中 `authorization` / `cookie` 落为 `[REDACTED]`；
 11. 发起一次长连接请求（SSE `GET /api/jobs/:id/events`，连接保持到心跳间隔以上后由任一端结束）
     → 访问日志顶层**必须**带 `requestId`，且与响应头 `x-request-id`、响应体 `requestId` 三者一致；
-12. 应用日志（`new Logger().log()`）顶层带 `requestId`，且**不再**出现 `request` 序列化对象。
+12. 应用日志（`new Logger().log()`）顶层带 `requestId`，且**不再**出现 `request` 序列化对象；
+13. SSE 连接保持超过 `LOG_SLOW_REQUEST_THRESHOLD` 后断开 → 访问日志**不出现** `[SLOW]`
+    但仍保留 `responseTime`；同时验证一个「真实慢接口」（处理耗时超阈值）照常带 `[SLOW]`。
 
 **日期**
 2026-09-11
@@ -240,7 +252,18 @@ logrotate / 采集 Agent / 容器日志驱动更符合容器化最佳实践，�
   行为变更（需知会采集侧）：开启 `quietReqLogger` 后，**应用日志（`req.log` / nestjs-pino 的
   `PinoLogger`）不再携带 `request` 序列化对象**，HTTP 维度只出现在访问日志 —— 与既有字段契约一致，
   但应用日志的字段集发生变化。
-  未做（另需决策）：SSE 长连接的 `[SLOW]` 标记 —— `responseTime` 对 SSE 是连接时长而非处理耗时，
-  持续超过 `LOG_SLOW_REQUEST_THRESHOLD` 的长连接会持续产出 `[SLOW]` 行，是否按路径 / `Content-Type`
-  排除需单独评估；SSE 回调内部打出的应用日志仍受 CLS 边界限制（`bizCode` 与兜底 `requestId` 可能缺失）。
+  未做/已办：SSE 长连接的 `[SLOW]` 标记已由同日后续修订处理（新增「决策」第 12 条）；
+  仍遗留：SSE 回调内部打出的应用日志受 CLS 边界限制（`bizCode` 与兜底 `requestId` 可能缺失）。
   验证：见「验证方式」第 11 / 12 条。
+- **2026-09-11**：流式响应（SSE）不再参与慢请求判定（新增「决策」第 12 条）。
+  起因：上一条修订遗留的「未做」项 —— `GET /api/jobs/:id/events` 这类长连接的 `responseTime`
+  是连接生命周期时长，客户端按设计挂过阈值就必然被标 `[SLOW]`，与真实慢请求混在同一条检索条件下，
+  采集侧无法据此配告警（噪声源源不断）。
+  变更：`customSuccessMessage` 增加流式响应判定（`isEventStreamResponse()`，读取
+  `Content-Type: text/event-stream`）并跳过 `[SLOW]`；`responseTime` 字段保留。
+  不硬编码路径的理由：SSE 端点集合会增长，按响应头判定对新增端点自动生效；该判定发生在
+  `finish` / `close` 时点，此时响应头仍可读（SSE controller 建连时即 `setHeader` + `flushHeaders`）。
+  同步：`.env`、`configuration.interface.ts` 的阈值注释，logger README 的配置表与新增
+  「SSE / 长连接被标 `[SLOW]`」故障排查条目。
+  未做：`responseTime` 对 SSE 的语义区分 —— 它仍是连接时长，采集侧若按该字段建「接口耗时」看板，
+  需自行排除 SSE（本文档已声明该字段对 SSE 的含义）。

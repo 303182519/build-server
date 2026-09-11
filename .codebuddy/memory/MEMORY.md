@@ -14,6 +14,10 @@
 - `error.log` 是 pino-roll 的独立 target，**只收 error 级别**（`level` 必须写在 target 层，写进 `options` 会被忽略）。因此任何「预期内的客户端问题」若按 error 记录，都会污染 error.log 与 error 告警。
 - 只保留响应结束的一条访问日志，**不产出「请求到达」日志**（`customLogLevel` 只在响应结束时被调用）。若将来重新引入到达日志，必须重新区分到达/结束两个时点。
 - 慢请求只追加 `[SLOW]` 标记、**不改变级别**；告警应在采集侧按 `[SLOW]` / `responseTime` 配置。
+- **流式响应（SSE）不参与慢请求判定（2026-09-11）**：`responseTime` 对 SSE 是连接生命周期时长而非处理耗时，
+  按 `Content-Type: text/event-stream` 识别（`logger.module.ts` 的 `isEventStreamResponse()`）后跳过 `[SLOW]`，
+  **不硬编码路径**（新增 SSE 端点自动生效）；`responseTime` 字段仍保留，只抑制标记。
+  新增 SSE 端点**必须**设置该响应头，否则退化为「每次连接断开都被标 `[SLOW]`」（见 ADR-002 决策第 12 条）。
 - 敏感信息双重脱敏：`pinoHttp.redact`（请求头凭证、password/token 等字段）+ `sanitizeUrl()`（`src/shared/logger/log-sanitizer.ts`，覆盖 query 中的 token/code/ticket 等）。手写日志若直接打印 `request.url` 会绕过脱敏。
 
 ### nestjs-pino Logger 桥接行为（易错，务必按此写法）

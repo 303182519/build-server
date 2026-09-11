@@ -59,6 +59,26 @@ function isHealthProbe(url: string | undefined): boolean {
 }
 
 /**
+ * 是否流式响应（SSE）。
+ *
+ * 为什么必须单独判定：SSE 的 `responseTime` 是「连接生命周期时长」而不是「服务端处理耗时」——
+ * 客户端按设计长期挂着连接（直到任务进入终态或主动断开），因此每次结束都必然超过
+ * `LOG_SLOW_REQUEST_THRESHOLD` 而被标 `[SLOW]`，把真正的慢请求彻底淹没
+ * （踩坑案例：`GET /api/jobs/:id/events` 正常断开也报 200 + `[SLOW]`）。
+ *
+ * 按响应头判定而不是硬编码路径：新增 SSE 端点只要正常设置 `Content-Type: text/event-stream`
+ * 即自动生效；`res.getHeader` 在响应结束（finish / close）时仍可读到已发送的头。
+ */
+function isEventStreamResponse(res: ServerResponse): boolean {
+  const contentType = res.getHeader('content-type');
+  if (contentType === undefined) return false;
+  const value = Array.isArray(contentType)
+    ? contentType.join(';')
+    : String(contentType);
+  return value.toLowerCase().includes('text/event-stream');
+}
+
+/**
  * 企业级 Pino 日志模块
  *
  * 特性：
@@ -181,7 +201,11 @@ function isHealthProbe(url: string | undefined): boolean {
             res: ServerResponse,
             responseTime: number,
           ) => {
-            const slow = responseTime > loggerConfig.slowRequestThreshold;
+            // 流式响应（SSE）不参与慢请求判定：它的 responseTime 是连接时长而非处理耗时，
+            // 否则每次正常断开都会产出 [SLOW]，把慢请求告警淹没（见 isEventStreamResponse）。
+            const slow =
+              !isEventStreamResponse(res) &&
+              responseTime > loggerConfig.slowRequestThreshold;
             const suffix = slow ? ' [SLOW]' : '';
             return `HTTP ${req.method} ${sanitizeUrl(req.url ?? '')} ${res.statusCode} - ${responseTime}ms${suffix}`;
           },
