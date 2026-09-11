@@ -41,10 +41,26 @@
   因此 `req.headers.authorization` / `res.headers[...]` 这类路径**恒不生效**，必须写
   `request.headers.authorization` / `response.headers["set-cookie"]`。当前之所以不泄露，仅因 req 序列化器
   只输出 `{ method, url }`、未含 headers —— 一旦往里加 headers，凭证会明文落盘（`README.md` 相关说法需同步）。
-- 顶层 `requestId` 的来源是 `pinoHttp.mixin`（CLS），不是 req 序列化器：pino-http 在 `RequestIdMiddleware`
-  之前执行，序列化时 `x-request-id` 尚未写入。mixin 在响应 `finish` 时确实能读到 ALS 上下文。
+- 顶层 `requestId` 的来源是 **pino-http 的请求级 child 绑定**（`pinoHttp.quietReqLogger: true` +
+  `customAttributeKeys.reqId: 'requestId'`），**既不是** mixin、**也不是** req 序列化器
+  （2026-09-11 修订：此前仅靠 mixin 读 CLS，长连接会丢 id，详见下一条）。
+- **requestId 的三条硬约定（2026-09-11 修复「长连接丢失 requestId」后确立，勿回退）**：
+  1. id 的唯一真相源是 `src/common/request-id.ts` 的 `resolveRequestId()`（`req.id` → `X-Request-ID`
+     → 新 UUID），`RequestIdMiddleware` 与 pino-http 的 `genReqId` **必须共用**：各自 `randomUUID()`
+     会产出**两个不同**的 id（访问日志 vs 响应头 / 响应体对不上）。
+  2. 顶层 `requestId` 由 `quietReqLogger: true` + `customAttributeKeys.reqId: 'requestId'` 的请求级
+     绑定承载（pino-http **仅在 `quietReqLogger: true`** 时创建该 child；默认 false 时 `req.id` 只藏在
+     `request` 序列化对象里）。**不得关闭这两个开关**：关掉后退回「仅 mixin 注入」，长连接 / 手动
+     `@Res()` 的访问日志会丢 `requestId`。
+  3. `mixin` 现只负责 `bizCode`（只能走 CLS）+ `requestId` 同值兜底。CLS 边界依然存在：长连接 /
+     手动 `@Res()` 响应的 `res.end()` 由 socket `close` 回调或 Redis Pub/Sub 回调触发（root 上下文），
+     此时 `bizCode` 与兜底 `requestId` 取不到（访问日志的**权威** `requestId` 已不受影响）。
+- `quietReqLogger: true` 的副作用（预期内）：应用日志（`req.log` / nestjs-pino `PinoLogger`）
+  **不再携带 `request` 序列化对象**，HTTP 维度只出现在访问日志；`quietResLogger` 保持默认 false，
+  访问日志仍有 `request` / `response` / `responseTime`。
 - **字段契约（单一真相源）**：HTTP 维度（`request.method` / `request.url` / `response.statusCode` /
-  `responseTime`）只由访问日志承载；`requestId` / `bizCode` 只在**顶层**（mixin 从 CLS 注入）；
+  `responseTime`）只由访问日志承载；`requestId` / `bizCode` 只在**顶层**
+  （`requestId` ← pino-http 请求级绑定；`bizCode` ← mixin 读 CLS）；
   `err` 只在 5xx 错误日志。**4xx 不再单独记日志**（曾同一 401 双写两条 warn + 字段路径不一致），
   业务码由访问日志顶层 `bizCode` 暴露。
 

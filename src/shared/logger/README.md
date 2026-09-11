@@ -105,12 +105,24 @@ export class UserService {
 
 ### 请求上下文（requestId / bizCode）
 
-- 入站请求：`RequestIdMiddleware` 会复用 `X-Request-ID` 请求头，缺失时生成 UUID，
-  并写回同名响应头，同时把 requestId 写进 CLS。
-- 应用日志 + HTTP 访问日志：当 `LOG_INCLUDE_CONTEXT=true` 时，pino `mixin` 读取 CLS，
-  给**拿不到 `req` 的深层代码**（service / 异步回调）也补上顶层 `requestId`。
-- 业务码：`GlobalExceptionsFilter` 会把被拒绝请求的 `bizCode` 写进 CLS，同样由 `mixin`
-  注入顶层 `bizCode`——这样「响应结束的那条访问日志」自带业务码。
+- 入站请求：`RequestIdMiddleware` 与 pino-http 的 `genReqId` 共用 `src/common/request-id.ts`
+  的 `resolveRequestId()`（优先级：`req.id` → `X-Request-ID` 请求头 → 新生成 UUID），
+  并写回 `req.id`、`req.headers['x-request-id']` 与同名响应头。**两侧共用同一函数是硬要求**：
+  各自生成会得到两个不同的 id，访问日志与响应头 / 响应体就对不上了。
+- 顶层 `requestId` 由 **pino-http 的请求级绑定**承载（`quietReqLogger: true` +
+  `customAttributeKeys.reqId: 'requestId'`）：id 在请求进入时就绑在请求级 logger 上，
+  因此**与「谁触发 `res.end()`」无关**，长连接 / 手动 `@Res()` 的响应（SSE、下载）也不会丢。
+- 当 `LOG_INCLUDE_CONTEXT=true` 时，pino `mixin` 额外读取 CLS，给**拿不到 `req` 的深层代码**
+  （service / 异步回调）补上同值 `requestId`（兜底，不是权威来源，见下）。
+- 业务码：`GlobalExceptionsFilter` 会把被拒绝请求的 `bizCode` 写进 CLS，由 `mixin`
+  注入顶层 `bizCode`——这样「响应结束的那条访问日志」自带业务码。**`bizCode` 只能走 CLS**：
+  它由业务代码在响应结束前写入，pino-http 无从得知。
+
+> ⚠️ 不要关闭 `pinoHttp.quietReqLogger`，也不要删掉 `customAttributeKeys.reqId`：这两个配置
+> 共同决定「访问日志的顶层 `requestId`」。关掉后访问日志会退回「只能靠 CLS mixin 注入」，
+> 而 CLS 在长连接 / 手动 `@Res()` 的响应上必然丢失（此时的 `res.end()` 由 socket `close` 回调
+> 或 Redis Pub/Sub 回调触发，已脱离 `RequestContextMiddleware` 的 `run()` 链），
+> 表现为访问日志**时有时无** `requestId`（曾真实发生：`GET /api/jobs/:id/events`）。
 
 > ⚠️ requestId / bizCode 只有**顶层**这一条字段路径，不要在日志里再输出
 > `request.requestId` 之类的重复维度（见下文字段契约）。
@@ -127,7 +139,7 @@ export class UserService {
 
 | 维度 | 字段路径 | 归属日志 |
 | --- | --- | --- |
-| 请求 ID | 顶层 `requestId` | 访问日志 + 应用日志 |
+| 请求 ID | 顶层 `requestId` | 访问日志 + 应用日志（访问日志走 pino-http 请求级绑定，不依赖 CLS） |
 | 业务码 | 顶层 `bizCode` | 访问日志（4xx / 5xx 都有）；5xx 错误日志另带一份 |
 | HTTP 方法 / 路径 | `request.method` / `request.url` | **仅**访问日志 |
 | HTTP 状态码 | `response.statusCode` | **仅**访问日志 |
@@ -161,7 +173,7 @@ export class UserService {
 - 请求头完全由客户端控制，属不可信输入，是下游解析器的投毒面。
 
 `referer` 同样不记：它可能携带一次性凭据，而 `sanitizeUrl()` **只覆盖 query**，path 段无法脱敏，
-收益低于风险。`x-request-id` 也不必在此重复输出——它已由 `genReqId` + `mixin` 落在顶层 `requestId`。
+收益低于风险。`x-request-id` 也不必在此重复输出——它已由 `genReqId` + 请求级绑定落在顶层 `requestId`。
 需要新增字段时按「更新本表 + 更新 ADR-002」的流程走。
 
 > ⚠️ 异常过滤器用 `{ err: exception }` 记录异常：`pino` 默认**不**序列化 `Error`，模块已在
@@ -289,6 +301,26 @@ pnpm start:dev
 > ⚠️ 因此 `warn` **不严格等于 4xx**：这类「客户端中断」的日志状态码可能是 2xx。
 > 按 `level=warn` 配置告警时需要容忍这一类；排查时看到耗时偏小、不带 `[SLOW]`、
 > 也不是 4xx 的 warn 行，应优先理解为客户端断开 / 超时，而非服务端故障。
+
+### 访问日志缺少顶层 `requestId`（长连接 / 手动 `@Res()` 的响应）
+
+**现象**：普通请求的访问日志带 `requestId`，但 SSE（`GET /api/jobs/:id/events`）、文件下载这类
+长连接的访问日志**时有时无**，且该条日志同时缺 `bizCode`。
+
+**根因**：`requestId` 若只由 pino `mixin` 从 CLS 注入，就会受 AsyncLocalStorage 的边界限制 ——
+store 只在 `RequestContextMiddleware` 的 `run()` 派生链里存在。这类响应的 `res.end()` 通常由
+**socket `close` 回调**（客户端断开）或 **Redis Pub/Sub 回调**（任务事件到达）触发，二者都在
+root 上下文，`res.emit('finish')` 时 mixin 取不到 store → 该条日志没有 `requestId`。
+只有「controller 内同步结束」（例如连接时任务已是终态）的请求才带得上。
+
+**已采用的修法**：顶层 `requestId` 改由 **pino-http 请求级绑定**承载
+（`quietReqLogger: true` + `customAttributeKeys.reqId: 'requestId'`），与「谁触发 `res.end()`」解耦。
+
+> ⚠️ 排查这类问题时先确认上面两个开关还在。**只配 `customAttributeKeys.reqId` 而不开
+> `quietReqLogger` 是无效的**：pino-http 仅在 `quietReqLogger: true` 时才创建那个 child，
+> 默认路径下 `req.id` 只藏在 `request` 序列化对象里，访问日志顶层看不到。
+> 另：`RequestIdMiddleware` 与 `genReqId` 必须共用 `resolveRequestId()`，否则两侧会生成
+> 两个不同的 id（访问日志与响应头 `x-request-id` 对不上）。
 
 ### 脱敏不生效 / 日志里出现明文凭证
 

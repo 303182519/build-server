@@ -47,9 +47,16 @@
    `request` / `response`），并统一使用 `*.` 通配前缀 —— `req.` / `res.` 前缀永远无法命中
    （详见「决策」第 10 条）。
 6. **健康探针**：`autoLogging.ignore` 过滤 `/api/health`、`/api/health/ready`。
-7. **请求上下文字段**：`requestId` 与 `bizCode` 统一由 `pinoHttp.mixin` 读取 CLS 注入
-   **顶层**，全链路只保留这一条字段路径。`req` 序列化器不再输出 `request.requestId`
-   （此前上游带 `X-Request-ID` 时同一维度会出现两条路径）。
+7. **请求上下文字段**：`requestId` 与 `bizCode` 都**只**出现在顶层这一条字段路径上，
+   `req` 序列化器不再输出 `request.requestId`（此前上游带 `X-Request-ID` 时同一维度会出现两条路径）。
+   两者的注入通道不同（本条于 2026-09-11 修订明确）：
+   - `requestId` 由 **pino-http 请求级绑定**注入（`quietReqLogger: true` +
+     `customAttributeKeys.reqId: 'requestId'`）：id 在请求进入时即绑定到请求级 logger，
+     与「响应由谁结束」无关，因此长连接 / 手动 `@Res()` 的响应也不会丢（见决策第 11 条）。
+   - `bizCode` 只能由 `pinoHttp.mixin` 读取 CLS 注入 —— 业务码是业务代码在响应结束前写进 CLS 的，
+     pino-http 无从得知。
+   `mixin` 同时注入同值 `requestId` 作为兜底（兼容「手动开 CLS 写 requestId」的非 HTTP 场景），
+   两侧共用 `resolveRequestId()`，取值必然一致。
 8. **日志归属与去重**：HTTP 维度（`request.method` / `request.url` / `response.statusCode` /
    `responseTime`）只由访问日志承载；`GlobalExceptionsFilter` 只把业务码写进 CLS（由 mixin
    注入访问日志），**不再单独产出 4xx 日志**；仅 5xx 额外产出一条 error 日志承载异常堆栈。
@@ -66,6 +73,16 @@
     前缀，也不再为 `request` / `response` 这两个顶层键单独生成脱敏 stringifier —— pino 的脱敏
     stringifier 按**顶层键**选取，`*.` 前缀统一由 wildcardFirst stringifier 处理；混用具体前缀与
     通配前缀时二者的优先关系属于实现细节，不应依赖。
+11. **requestId 的生成与注入（长连接必须带 id）**：`RequestIdMiddleware` 与 pino-http 的
+    `genReqId` 共同调用 `src/common/request-id.ts` 的 `resolveRequestId()`（优先级：
+    `req.id` → `X-Request-ID` → 新 UUID），并写回 `req.id` 与 `req.headers['x-request-id']`；
+    顶层 `requestId` 由 pino-http 的请求级绑定（`quietReqLogger: true` +
+    `customAttributeKeys.reqId: 'requestId'`）承载。
+    起因：SSE `GET /api/jobs/:id/events` 的访问日志缺失 `requestId`（且时有时无）——它的
+    `res.end()` 由 socket `close` 回调或 Redis Pub/Sub 回调触发，已脱离
+    `RequestContextMiddleware` 的 `run()` 链，只靠 `mixin` 读 CLS 必然取不到 store。
+    另外，两处各自 `randomUUID()` 会产出**两个不同**的 id（访问日志与响应头 / 响应体对不上），
+    因此必须共用同一解析函数；中间件写回 `req.id` 后，无论两个中间件的执行顺序如何都收敛到同值。
 
 **备选方案**
 
@@ -100,13 +117,18 @@ logrotate / 采集 Agent / 容器日志驱动更符合容器化最佳实践，�
 
 - 新增依赖 `pino-roll`（需同步更新 `pnpm-lock.yaml`）；
 - 移除 `LOG_COMPRESS_OLD_FILES` 配置项，压缩改由外部处理；
-- 自建中间件/拦截器被删除，相关单元/集成测试需同步调整。
+- 自建中间件/拦截器被删除，相关单元/集成测试需同步调整；
+- **应用日志不再携带 `request` 序列化对象**（`quietReqLogger: true` 的结果）：HTTP 维度只在访问日志
+  出现，与字段契约一致，但会改变既有应用日志的字段集（`request.method` / `request.url` /
+  `request.userAgent` / `request.contentType` 不再出现在应用日志里），采集侧若有规则依赖需同步调整。
 
 风险：
 
 - `pino-roll` 并行写多个文件，需确认目标磁盘 IO 可承受；
   → 高流量场景建议改为仅 stdout，由采集链路落盘。
-- `pinoHttp.mixin` 依赖 CLS，非 HTTP 上下文（BullMQ / 定时任务）不会带 requestId；
+- `pinoHttp.mixin` 依赖 CLS（现主要承载 `bizCode`）：非 HTTP 上下文（BullMQ / 定时任务）不会带
+  `bizCode`；长连接 / 手动 `@Res()` 响应在请求链外 `res.end()` 时，`bizCode` 与兜底 `requestId`
+  也可能缺失（访问日志的权威 `requestId` 已不受影响，见「决策」第 11 条）；
   → 若需要，需用 `PinoLogger.runInContext` 手动开上下文。
 
 **约束要求**
@@ -125,7 +147,12 @@ logrotate / 采集 Agent / 容器日志驱动更符合容器化最佳实践，�
   禁止把 `req.headers` 整体塞进日志；新增字段需同步更新本节与 logger README 的字段契约表；
 - `redact.paths` 必须使用 access log 的**顶层键名**，并统一使用 `*.` 通配前缀
   （`req.headers.*` / `res.headers.*` 永远命中不到；`request.` 这类具体前缀会与 `*.xxx` 通配路径混用）；
-- 预期内的 4xx 不得再新增第二条日志（响应结束的那条访问日志即为权威记录）。
+- 预期内的 4xx 不得再新增第二条日志（响应结束的那条访问日志即为权威记录）；
+- 不得关闭 `pinoHttp.quietReqLogger`、不得移除 `customAttributeKeys.reqId`：二者共同承载访问日志的
+  顶层 `requestId`；关闭后退回「仅由 mixin 注入」，长连接 / 手动 `@Res()` 的访问日志会丢失 `requestId`
+  （见「决策」第 11 条与 logger README 的故障排查条目）；
+- requestId 的生成必须走 `src/common/request-id.ts` 的 `resolveRequestId()`，禁止在中间件或
+  pino 配置里各自生成 id（否则访问日志与响应头 / 响应体的 id 会不一致）。
 
 **验证方式**
 
@@ -141,7 +168,10 @@ logrotate / 采集 Agent / 容器日志驱动更符合容器化最佳实践，�
 8. 业务 `new Logger().log()` 的输出出现在 pino 日志中（含 requestId）；
 9. 带 `Authorization` / `Cookie` / `X-Api-Key` 请求头的请求 → 落盘日志中**不出现**这些原始值，
    访问日志含 `request.userAgent` / `request.contentType` 且**不含** `request.headers`；
-10. 把 `{ headers: req.headers }` 之类对象交给 logger → 其中 `authorization` / `cookie` 落为 `[REDACTED]`。
+10. 把 `{ headers: req.headers }` 之类对象交给 logger → 其中 `authorization` / `cookie` 落为 `[REDACTED]`；
+11. 发起一次长连接请求（SSE `GET /api/jobs/:id/events`，连接保持到心跳间隔以上后由任一端结束）
+    → 访问日志顶层**必须**带 `requestId`，且与响应头 `x-request-id`、响应体 `requestId` 三者一致；
+12. 应用日志（`new Logger().log()`）顶层带 `requestId`，且**不再**出现 `request` 序列化对象。
 
 **日期**
 2026-09-11
@@ -191,3 +221,26 @@ logrotate / 采集 Agent / 容器日志驱动更符合容器化最佳实践，�
   影响：访问日志每条新增 `request.userAgent` / `request.contentType` 两个字段（低基数、纯文本，
   不建议建索引）；单条日志体积随 UA 长度小幅增长，需计入容量评估。
   未做：`clientIp`（仍待 trust proxy 层数决策）；`referer`（见上）。
+- **2026-09-11**：修复「长连接 / 手动 `@Res()` 响应的访问日志缺少顶层 `requestId`」
+  （新增「决策」第 11 条，并明确第 7 条的注入通道分工）。
+  起因：SSE `GET /api/jobs/217424945129455616/events` 的 200 访问日志（`[SLOW]`，2628ms）没有顶层
+  `requestId`，而同期普通请求（如 `GET /api/user/list` 404）都带 `requestId` + `bizCode`，呈现
+  「时有时无」。核实结论：`mixin` 依赖 AsyncLocalStorage，其 store 只在 `RequestContextMiddleware`
+  的 `run()` 派生链中存在；该 SSE 的 `res.end()` 由 socket `close` 回调（客户端断开）或
+  Redis Pub/Sub 回调（任务事件到达）触发，二者均在 root 上下文，`res` 的 `finish` / `close`
+  也在 root 上下文 emit，`mixin` 读到 `{}`。仅当连接时任务已为终态（`cleanup()` 由 controller
+  同步调用）才带得上，故表现为时有时无。核查中另发现一处隐患：`RequestIdMiddleware` 与
+  `genReqId` 各自 `randomUUID()`，无上游 `X-Request-ID` 时会生成**两个不同的 id**，
+  于是「访问日志的 requestId」与「响应头 / 响应体的 requestId」本就不一致。
+  变更：① 新增 `src/common/request-id.ts` 的 `resolveRequestId()` 作为 id 唯一真相源，
+  `genReqId` 与 `RequestIdMiddleware` 共用，中间件同时写回 `req.id`，使两种中间件执行顺序都收敛到
+  同值；② `pinoHttp` 开启 `quietReqLogger: true` 并新增 `customAttributeKeys.reqId: 'requestId'`，
+  顶层 `requestId` 改由 pino-http 的请求级 child 绑定承载，与「谁触发 `res.end()`」解耦；
+  `mixin` 保留同值 `requestId` 兜底并继续承担 `bizCode`。
+  行为变更（需知会采集侧）：开启 `quietReqLogger` 后，**应用日志（`req.log` / nestjs-pino 的
+  `PinoLogger`）不再携带 `request` 序列化对象**，HTTP 维度只出现在访问日志 —— 与既有字段契约一致，
+  但应用日志的字段集发生变化。
+  未做（另需决策）：SSE 长连接的 `[SLOW]` 标记 —— `responseTime` 对 SSE 是连接时长而非处理耗时，
+  持续超过 `LOG_SLOW_REQUEST_THRESHOLD` 的长连接会持续产出 `[SLOW]` 行，是否按路径 / `Content-Type`
+  排除需单独评估；SSE 回调内部打出的应用日志仍受 CLS 边界限制（`bizCode` 与兜底 `requestId` 可能缺失）。
+  验证：见「验证方式」第 11 / 12 条。

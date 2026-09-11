@@ -4,10 +4,10 @@ import { LoggerModule as PinoLoggerModule } from 'nestjs-pino';
 import type { Params } from 'nestjs-pino';
 import { stdSerializers, type DestinationStream } from 'pino';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { randomUUID } from 'node:crypto';
 import { getLoggerConfig } from '../../config/configuration';
 import { IsDev } from '../../common/constants/environment';
 import { getRequestContext } from '../../common/request-context';
+import { resolveRequestId } from '../../common/request-id';
 import { sanitizeUrl } from './log-sanitizer';
 
 /**
@@ -168,12 +168,10 @@ function isHealthProbe(url: string | undefined): boolean {
             ],
             censor: '[REDACTED]',
           },
-          // 复用上游透传的 requestId（网关/调用方），否则生成 UUID
-          genReqId: (req: IncomingMessage) => {
-            const header = req.headers['x-request-id'];
-            if (typeof header === 'string' && header) return header;
-            return randomUUID();
-          },
+          // 复用上游透传的 requestId（网关/调用方），否则生成 UUID。
+          // 与 RequestIdMiddleware 共用同一解析函数：两侧必须落在同一个值上，
+          // 否则「访问日志里的 requestId」与「响应头 / 响应体里的 requestId」会不一致。
+          genReqId: (req: IncomingMessage) => resolveRequestId(req),
           // 健康探针不产生访问日志（只关自动日志，保留应用日志的请求上下文）
           autoLogging: {
             ignore: (req: IncomingMessage): boolean => isHealthProbe(req.url),
@@ -214,7 +212,24 @@ function isHealthProbe(url: string | undefined): boolean {
             res: 'response',
             err: 'error',
             responseTime: 'responseTime',
+            // 决定 quietReqLogger 创建的 child 用哪个键名绑定 requestId
+            // （pino-http 默认是 'reqId'）。字段契约要求顶层只出现 `requestId`，故对齐为同名。
+            reqId: 'requestId',
           },
+          // 【为什么必须开】顶层 requestId 不能只靠下方 mixin 读 CLS：
+          // mixin 依赖 AsyncLocalStorage，而 store 只存在于 RequestContextMiddleware 的
+          // run() 派生链里。长连接 / 手动 @Res() 的响应（SSE 事件流、文件下载）往往是在
+          // socket close 回调或 Redis Pub/Sub 回调里执行 res.end()，此时已脱离请求链，
+          // mixin 读不到 store → 访问日志丢失顶层 requestId（踩坑案例：GET /api/jobs/:id/events）。
+          // pino-http 则在请求进入时就把 requestId 作为 child binding 绑在请求级 logger 上
+          // （`req.id = req.id || genReqId(...)` 之后 `logger.child({ [reqIdKey]: req.id })`），
+          // 该绑定与「谁触发 res.end()」无关，因此长连接也必然带上。
+          // 注意：只有 quietReqLogger=true 时 pino-http 才会创建这个 child——默认 false 时
+          // reqId 只以 `req.id` 形式藏在 request 序列化对象里，访问日志根本看不到。
+          // 副作用（预期内）：应用日志（req.log / nestjs-pino 的 PinoLogger）不再携带 request
+          // 序列化对象，与「HTTP 维度只由访问日志承载」的字段契约一致。
+          // quietResLogger 保持默认 false：访问日志仍需要 request / response / responseTime。
+          quietReqLogger: true,
           serializers: {
             // 只输出白名单字段（见 ADR-002 决策第 10 条）。规范化对象虽然含 headers，但请求头里
             // 绝大多数内容是凭证 / PII，且 Cookie 常有 KB 级体积，整包落盘会同时带来泄露风险与
@@ -224,9 +239,10 @@ function isHealthProbe(url: string | undefined): boolean {
             // referer 故意不记：它可能携带一次性凭据，而 sanitizeUrl() 只覆盖 query，path 段
             // 无法脱敏，收益低于风险。
             //
-            // requestId 不在这里输出：全链路只保留顶层 `requestId`（由 mixin 从 CLS 注入，
-            // 见下方），避免同一维度出现「request.requestId」与顶层「requestId」两条字段路径。
-            // x-request-id 同理，已由 genReqId + mixin 落在顶层 requestId 上。
+            // requestId 不在这里输出：全链路只保留顶层 `requestId`（由 pino-http 的
+            // quietReqLogger 请求级绑定注入，mixin 在 CLS 可用时给出同值兜底，见下方），
+            // 避免同一维度出现「request.requestId」与顶层「requestId」两条字段路径。
+            // x-request-id 同理，已由 genReqId + 请求级绑定落在顶层 requestId 上。
             req: (req: NormalizedRequest) => {
               const headers = req.headers ?? {};
               return {
@@ -248,9 +264,13 @@ function isHealthProbe(url: string | undefined): boolean {
           transport: { targets },
         };
 
-        // 让「拿不到 req 的深层代码」（service / 异步回调）也能凭 CLS 关联 requestId；
-        // 同时把异常过滤器写入的业务码注入日志——这样「响应结束的那条访问日志」自带
-        // bizCode，4xx 不必再由异常过滤器单独产出一条重复日志（见 ADR-002）。
+        // 让「拿不到 req 的深层代码」（service / 异步回调）也能凭 CLS 关联 requestId
+        // ——requestId 的**权威来源**已是 pino-http 的请求级绑定（见上方 quietReqLogger），
+        // 这里注入的是同值兜底（两侧共用 resolveRequestId，必然一致），保留是为了兼容
+        // 「手动开 CLS 写 requestId」的非 HTTP 场景；
+        // 更关键的作用是把异常过滤器写入的业务码注入日志：bizCode 只能在响应结束前写进
+        // CLS，因此「响应结束的那条访问日志」自带 bizCode，4xx 不必再由异常过滤器单独
+        // 产出一条重复日志（见 ADR-002）。
         if (loggerConfig.includeContext) {
           pinoHttp.mixin = () => {
             const { requestId, bizCode } = getRequestContext();

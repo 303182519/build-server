@@ -13,7 +13,7 @@ type LogConfig =
       { emit: 'event'; level: 'warn' },
       { emit: 'event'; level: 'error' },
     ]
-  | ['query', 'info', 'warn', 'error'];
+  | ['error'];
 
 type ClientOptions = Omit<Prisma.PrismaClientOptions, 'log'> & {
   log: LogConfig;
@@ -34,7 +34,7 @@ export class PrismaService
             { emit: 'event', level: 'warn' },
             { emit: 'event', level: 'error' },
           ]
-        : ['query', 'info', 'warn', 'error'],
+        : ['error'],
     });
   }
 
