@@ -3,7 +3,16 @@ import { IsProduction } from '@/common/constants/environment';
 import { Cookies } from '@/common/decorators/cookies.decorator';
 import { Public } from '@/common/decorators/jwt-auth.decorator';
 import { getConfig } from '@/config/configuration';
-import { Body, Controller, Post, Res, Get, Query } from '@nestjs/common';
+import { sanitizeUrl } from '@/shared/logger/log-sanitizer';
+import {
+  Body,
+  Controller,
+  Post,
+  Res,
+  Get,
+  Query,
+  Logger,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -43,6 +52,8 @@ import { OAuthTicketService } from './oauth-ticket.service';
 
 @Controller('auth')
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(
     private readonly authService: AuthService,
     private readonly refreshTokenService: RefreshTokenService,
@@ -258,7 +269,10 @@ export class AuthController {
       const sep = url.search ? '&' : '?';
       url.search = `${url.search}${sep}${ticketParam}`;
     }
-    console.log('buildFrontendCallbackUrl', url.toString());
+    // ticket 属于一次性登录凭证，落日志前必须脱敏
+    this.logger.debug(
+      `buildFrontendCallbackUrl ${sanitizeUrl(url.toString())}`,
+    );
     return url.toString();
   }
 

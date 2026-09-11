@@ -1,5 +1,5 @@
 import { User } from '@prisma/client';
-import { ExecutionContext, Injectable } from '@nestjs/common';
+import { ExecutionContext, Injectable, Logger } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
 import { Observable } from 'rxjs';
@@ -9,6 +9,8 @@ import { ErrorException } from '../exceptions/error.exception';
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
+  private readonly logger = new Logger(JwtAuthGuard.name);
+
   constructor(private reflector: Reflector) {
     super();
   }
@@ -40,11 +42,13 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     // context: ExecutionContext,
     // status?: any,
   ): TUser {
-    console.log('-------------JwtAuthGuard-------------');
-    console.log('err:', err);
-    console.log('user:', user?.username);
-    console.log('info:', info);
-    console.log('--------------------------------------');
+    // 只记录判定所需的最小信息，避免把 token / 原始错误对象打进日志
+    this.logger.debug('JWT 认证结果', {
+      hasError: Boolean(err),
+      username: user?.username,
+      infoName:
+        info instanceof Error ? info.name : info ? String(info) : undefined,
+    });
 
     if (err) {
       throw err;

@@ -116,10 +116,8 @@ export interface LoggerConfig {
   logDir?: string;
   /** 单个日志文件最大大小（MB），超过后自动轮转 */
   maxFileSize?: number;
-  /** 保留的日志文件数量（0 = 不限制） */
+  /** 保留的轮转文件数量（0 = 不限制） */
   maxFiles?: number;
-  /** 是否压缩轮转后的日志文件 */
-  compressOldFiles?: boolean;
 }
 
 export interface AppConfig {

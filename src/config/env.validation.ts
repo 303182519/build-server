@@ -85,5 +85,4 @@ export const validationSchema = Joi.object({
   LOG_DIR: Joi.string().default('logs'),
   LOG_MAX_FILE_SIZE: Joi.number().integer().min(1).default(10),
   LOG_MAX_FILES: Joi.number().integer().min(0).default(7),
-  LOG_COMPRESS_OLD_FILES: Joi.string().valid('true', 'false'),
 }).oxor('REDIS_URL', 'REDIS_HOST'); // Redis 连接二选一,也可都不提供

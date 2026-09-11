@@ -35,7 +35,6 @@ export class RefreshTokenService {
     const refreshToken = randomBytes(32).toString('base64url');
     const accessExpiresAt = Date.now() + jwt.accessExpiresIn * 1000;
     const refreshExpiresAt = new Date(Date.now() + jwt.refreshExpiresIn * 1000);
-    console.log('jwt.accessExpiresIn', jwt.accessExpiresIn);
     await client.refreshToken.create({
       data: {
         id: BigInt(generateSnowflakeId()),

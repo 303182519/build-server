@@ -3,12 +3,10 @@ import {
   MiddlewareConsumer,
   Module,
   NestModule,
-  RequestMethod,
   ClassSerializerInterceptor,
 } from '@nestjs/common';
 import { globalPipes } from './pipes/index';
 import { APP_FILTER, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
-import { TimingInterceptor } from './interceptors/timing.interceptor';
 import { ResponseInterceptor } from './interceptors/response.interceptor';
 import { PostResponseInterceptor } from './interceptors/post-response.interceptor';
 import { UserContextInterceptor } from './interceptors/user-context.interceptor';
@@ -18,7 +16,6 @@ import cookieParser from 'cookie-parser';
 import { RequestContextMiddleware } from './middleware/request-context.middleware';
 import { CacheHeaderInterceptor } from './interceptors/cache-header.interceptor';
 import { RequestIdMiddleware } from './middleware/request-id.middleware';
-import { HttpLoggerMiddleware } from './middleware/http-logger.middleware';
 
 // 横切关注点的集中注册点
 // 用 @Global() 是因为下面的 APP_* provider 要在整个应用生效；
@@ -26,9 +23,8 @@ import { HttpLoggerMiddleware } from './middleware/http-logger.middleware';
 // @Global()
 @Module({
   providers: [
-    // 注册顺序就是执行顺序：Timing 在最外层，能测到全链路耗时
-    // 写反（Timing 在内层）会让统计值偏小
-    { provide: APP_INTERCEPTOR, useClass: TimingInterceptor },
+    // 访问日志 / 慢请求 / 状态码分级的职责统一交给 nestjs-pino（pino-http），
+    // 这里不再注册自建实现，避免同一条请求产生两套日志。
     // 把 service 写进请求上下文的缓存命中状态，写成 X-Cache 响应头（纯可观测）。
     // 排在 Transform 前/后都行——它只在 tap 里设 header，不改响应体。
     { provide: APP_INTERCEPTOR, useClass: CacheHeaderInterceptor },
@@ -52,11 +48,7 @@ export class CommonModule implements NestModule {
     // 后续所有中间件 / controller / service / 拦截器都在这个 store 里，X-Cache 状态才传得出去。
     consumer.apply(RequestContextMiddleware).forRoutes('*');
 
-    consumer
-      .apply(cookieParser(), RequestIdMiddleware, HttpLoggerMiddleware)
-      // 健康探针不进访问日志：会被高频调用，日志量没价值
-      .exclude({ path: 'api/health', method: RequestMethod.GET })
-      .exclude({ path: 'api/health/ready', method: RequestMethod.GET })
-      .forRoutes('*');
+    // 健康探针的自动访问日志由 logger.module.ts 的 autoLogging 统一过滤
+    consumer.apply(cookieParser(), RequestIdMiddleware).forRoutes('*');
   }
 }

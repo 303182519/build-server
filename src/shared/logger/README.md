@@ -2,61 +2,83 @@
 
 ## 概述
 
-本项目已集成企业级 Pino 日志系统,提供结构化、高性能的日志记录能力。
+本模块基于 `nestjs-pino` + `pino` 提供结构化日志能力，覆盖三件事：
 
-## 核心特性
+1. **HTTP 访问日志**：由 `pino-http` 统一产出（不再有自建中间件/拦截器）。
+2. **应用日志**：`main.ts` 通过 `app.useLogger(app.get(Logger))` 把 NestJS 全局 `Logger`
+   桥接到 pino，因此业务代码里的 `new Logger(XxxService.name)` 同样会产出结构化日志。
+3. **文件落盘与轮转**：由 `pino-roll` 完成。
 
-- ✅ **结构化 JSON 日志**:生产环境自动输出机器可读的 JSON 格式
-- ✅ **请求上下文关联**:自动注入 requestId、userId、traceId 等上下文
-- ✅ **智能日志分级**:根据 HTTP 状态码和响应时间自动选择日志级别
-- ✅ **日志轮转与压缩**:自动管理日志文件大小,支持压缩旧文件
-- ✅ **多输出目标**:可同时输出到控制台和文件
-- ✅ **慢请求检测**:超过阈值的请求自动标记为 [SLOW]
-- ✅ **NestJS Logger 兼容**:无缝替换原有 NestJS Logger
+> ⚠️ 关键约束（踩坑点）：`nestjs-pino` 的 `forRoot/forRootAsync` 只消费
+> `Params` 上的 `pinoHttp / exclude / forRoutes / useExisting / assignResponse` 五个键。
+> pino 自身的 `level / transport / formatters / redact / mixin` 必须写在 **`pinoHttp` 内部**，
+> 放在 `Params` 根层级会被静默忽略（旧实现的文件输出就是因为这个原因从未生效）。
 
 ## 配置说明
 
 ### 环境变量
 
-在 `.env` 文件中配置以下参数:
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `LOG_LEVEL` | `info` | trace < debug < info < warn < error < fatal < silent |
+| `LOG_JSON_FORMAT` | 生产 `true` / 其他 `false` | 控制台是否输出结构化 JSON |
+| `LOG_INCLUDE_CONTEXT` | `true` | 是否通过 CLS 给所有日志附带 `requestId` |
+| `LOG_SLOW_REQUEST_THRESHOLD` | `1000` | 慢请求阈值（毫秒），超阈值追加 `[SLOW]` |
+| `LOG_OUTPUT` | `both` | `console` \| `file` \| `both` |
+| `LOG_DIR` | `logs` | 日志目录（文件输出时自动创建） |
+| `LOG_MAX_FILE_SIZE` | `10` | 单个日志文件上限（MB） |
+| `LOG_MAX_FILES` | `7` | 轮转文件保留数量（`0` = 不限制） |
 
-```bash
-# 日志级别:trace < debug < info < warn < error < fatal < silent
-LOG_LEVEL=info
+### 控制台格式
 
-# 是否启用结构化 JSON 日志(生产环境推荐 true)
-LOG_JSON_FORMAT=true
+| 环境 | 控制台输出 |
+| --- | --- |
+| 生产（或 `LOG_JSON_FORMAT=true`） | 单行 JSON（写入 stdout，可被采集链路直接解析） |
+| 开发（`LOG_JSON_FORMAT=false`） | `pino-pretty` 人类可读格式（带颜色） |
 
-# 慢请求阈值(毫秒)
-LOG_SLOW_REQUEST_THRESHOLD=1000
+### 文件输出
 
-# 日志输出目标:console | file | both
-LOG_OUTPUT=both
+`LOG_OUTPUT` 为 `file` 或 `both` 时按大小轮转，`error` 级别单独落盘：
 
-# 日志文件目录
-LOG_DIR=logs
-
-# 单个日志文件最大大小(MB)
-LOG_MAX_FILE_SIZE=10
-
-# 保留的日志文件数量(0 = 不限制)
-LOG_MAX_FILES=7
-
-# 是否压缩轮转后的旧日志文件
-LOG_COMPRESS_OLD_FILES=true
+```
+logs/
+├── app.log        # 全级别
+├── app.<n>.log    # 历史轮转文件（命名由 pino-roll 决定）
+├── error.log      # 仅 error 及以上
+└── error.<n>.log
 ```
 
-### 开发/生产环境差异
-
-| 配置项       | 开发环境默认值     | 生产环境默认值 |
-| ------------ | ------------------ | -------------- |
-| LOG_LEVEL    | debug              | info           |
-| LOG_JSON_FORMAT | false           | true           |
-| LOG_OUTPUT   | both               | both           |
+- `error` 过滤依赖 **target 层的 `level: 'error'`**；若把 `level` 写进 `options` 会被忽略，
+  导致 `error.log` 收下所有级别。
+- 本项目**不做应用内 gzip 压缩**。日志压缩/归档建议交给 logrotate、日志采集 Agent
+  或容器平台的日志驱动处理（应用内压缩会持续占用 CPU 与磁盘 IO）。
 
 ## 使用方法
 
-### 1. 在 Service 中使用
+### 推荐：直接使用 NestJS Logger（已桥接）
+
+```typescript
+import { Injectable, Logger } from '@nestjs/common';
+
+@Injectable()
+export class UserService {
+  private readonly logger = new Logger(UserService.name);
+
+  async createUser(dto: CreateUserDto) {
+    this.logger.log('创建用户'); // → pino info
+    this.logger.debug('开始写入', { username: dto.username });
+    try {
+      return await this.repo.create(dto);
+    } catch (error) {
+      // 第二个参数会作为结构化字段合并进日志
+      this.logger.error('创建用户失败', { username: dto.username });
+      throw error;
+    }
+  }
+}
+```
+
+### 可选：注入 PinoLogger（需要更细的控制）
 
 ```typescript
 import { Injectable } from '@nestjs/common';
@@ -64,358 +86,75 @@ import { PinoLogger } from 'nestjs-pino';
 
 @Injectable()
 export class UserService {
-  constructor(private readonly logger: PinoLogger) {}
+  constructor(private readonly logger: PinoLogger) {
+    this.logger.setContext(UserService.name);
+  }
 
-  async createUser(data: CreateUserDto) {
-    // 基础日志
-    this.logger.info('Creating new user', { username: data.username });
-
-    try {
-      const user = await this.userRepository.create(data);
-      this.logger.info('User created successfully', { userId: user.id });
-      return user;
-    } catch (error) {
-      // 错误日志(自动包含堆栈信息)
-      this.logger.error('Failed to create user', {
-        error: error.message,
-        stack: error.stack,
-        username: data.username,
-      });
-      throw error;
-    }
+  async createUser(dto: CreateUserDto) {
+    this.logger.info({ username: dto.username }, '创建用户');
   }
 }
 ```
 
-### 2. 在 Controller 中使用
+### 请求上下文（requestId）
+
+- 入站请求：`RequestIdMiddleware` 会复用 `X-Request-ID` 请求头，缺失时生成 UUID，
+  并写回同名响应头。
+- HTTP 访问日志：从序列化后的 `request.requestId` 读取。
+- 应用日志：当 `LOG_INCLUDE_CONTEXT=true` 时，通过 pino `mixin` 读取 CLS，
+  给**拿不到 `req` 的深层代码**（service / 异步回调）也补上顶层 `requestId`。
+
+> 注意：模块不自动注入 `userId` / `traceId`。需要这类字段请由业务代码显式传入。
+
+## 安全：日志脱敏
+
+1. **请求头凭证**：`pinoHttp.redact` 已内置 `authorization`、`cookie`、`set-cookie`，
+   以及 `password / secret / token / accessToken / refreshToken / apiKey` 等常见字段，统一替换为 `[REDACTED]`。
+2. **URL 查询参数**：`sanitizeUrl()`（`log-sanitizer.ts`）会在写日志前脱敏
+   `token / code / ticket / signature / apiKey ...` 等敏感 query 参数，
+   覆盖 OAuth 回调 ticket 之类的场景。
 
 ```typescript
-import { Controller, Get, Param } from '@nestjs/common';
-import { PinoLogger } from 'nestjs-pino';
+import { sanitizeUrl } from '@/shared/logger/log-sanitizer';
 
-@Controller('users')
-export class UsersController {
-  constructor(private readonly logger: PinoLogger) {}
-
-  @Get(':id')
-  async findOne(@Param('id') id: string) {
-    this.logger.debug('Fetching user by ID', { userId: id });
-    
-    const user = await this.usersService.findOne(id);
-    
-    if (!user) {
-      this.logger.warn('User not found', { userId: id });
-      throw new NotFoundException();
-    }
-    
-    return user;
-  }
-}
+this.logger.debug(`callback ${sanitizeUrl(req.url)}`);
 ```
 
-### 3. 带上下文的日志
+> ⚠️ 记录请求体（body）时请自行确认不含密码/凭证，`redact` 只能覆盖配置过的字段路径。
 
-Pino 会自动从请求上下文中提取以下信息并附加到日志中:
+## 健康探针
 
-- `requestId`: 来自 `X-Request-ID` 请求头
-- `userId`: 当前认证用户的 ID(如果已登录)
-- `traceId`: 分布式追踪 ID(如果存在)
-
-```typescript
-// 无需手动传递,自动关联
-this.logger.info('Processing payment', { amount: 100 });
-// 输出: {"level":"INFO","msg":"Processing payment","amount":100,"requestId":"abc-123","userId":"user-456"}
-```
-
-### 4. 不同级别的日志
-
-```typescript
-// Trace - 最详细的调试信息
-this.logger.trace('Variable state', { var1, var2 });
-
-// Debug - 开发环境调试信息
-this.logger.debug('Cache miss for key', { cacheKey });
-
-// Info - 常规业务操作
-this.logger.info('Order placed', { orderId, userId });
-
-// Warn - 需要关注但不影响运行的情况
-this.logger.warn('Slow query detected', { duration: 2500 });
-
-// Error - 错误但程序仍可运行
-this.logger.error('Payment failed', { error: error.message });
-
-// Fatal - 致命错误,程序即将退出
-this.logger.fatal('Database connection lost');
-```
-
-## 日志输出示例
-
-### 开发环境(人类可读格式)
-
-```
-[2026-09-11 10:30:45.123] INFO: HTTP POST /api/users 201 45ms
-    request: {
-      "method": "POST",
-      "url": "/api/users",
-      "requestId": "req-abc-123"
-    }
-    response: {
-      "statusCode": 201
-    }
-    responseTime: 45
-```
-
-### 生产环境(JSON 格式)
-
-```json
-{
-  "level": "INFO",
-  "time": 1726027845123,
-  "msg": "HTTP POST /api/users 201 45ms",
-  "request": {
-    "method": "POST",
-    "url": "/api/users",
-    "requestId": "req-abc-123"
-  },
-  "response": {
-    "statusCode": 201
-  },
-  "responseTime": 45
-}
-```
-
-### 慢请求日志
-
-```
-[2026-09-11 10:30:45.123] WARN: HTTP GET /api/reports/export 200 3500ms [SLOW]
-    request: {
-      "method": "GET",
-      "url": "/api/reports/export",
-      "requestId": "req-slow-456"
-    }
-    responseTime: 3500
-```
-
-## 日志文件管理
-
-### 文件结构
-
-```
-logs/
-├── app.log          # 主日志文件
-├── app.log.1.gz     # 轮转后的压缩文件
-├── app.log.2.gz
-├── ...
-├── error.log        # 仅错误级别日志
-└── error.log.1.gz
-```
-
-### 轮转策略
-
-- 单个文件达到 `LOG_MAX_FILE_SIZE`(默认 10MB) 时自动轮转
-- 保留最近 `LOG_MAX_FILES`(默认 7) 个文件
-- 旧文件自动压缩为 `.gz` 格式(可配置)
-
-## 性能优化建议
-
-### 1. 生产环境启用 JSON 格式
-
-JSON 格式比人类可读格式快 3-5 倍,且更容易被日志采集系统解析。
-
-### 2. 合理设置日志级别
-
-- 开发环境:`debug`
-- 测试环境:`info`
-- 生产环境:`info` 或 `warn`(高流量场景)
-
-### 3. 避免在循环中记录详细日志
-
-```typescript
-// ❌ 不推荐
-for (const item of items) {
-  this.logger.debug('Processing item', { itemId: item.id });
-}
-
-// ✅ 推荐
-this.logger.debug('Processing batch', { itemCount: items.length });
-```
-
-### 4. 使用对象而非字符串拼接
-
-```typescript
-// ❌ 不推荐
-this.logger.info(`User ${userId} logged in from ${ip}`);
-
-// ✅ 推荐(Pino 会高效序列化对象)
-this.logger.info('User logged in', { userId, ip });
-```
-
-## 与日志采集系统集成
-
-### ELK Stack (Elasticsearch + Logstash + Kibana)
-
-Pino 的 JSON 输出可直接被 Logstash 解析:
-
-```javascript
-// logstash.conf
-input {
-  file {
-    path => "/app/logs/app.log"
-    codec => json
-  }
-}
-```
-
-### Grafana Loki
-
-使用 `pino-loki` transport:
-
-```bash
-pnpm add pino-loki
-```
-
-```typescript
-// logger.module.ts
-transport: {
-  targets: [
-    {
-      target: 'pino-loki',
-      options: {
-        host: 'http://loki:3100',
-        labels: { app: 'my-app' },
-      },
-    },
-  ],
-}
-```
-
-### Datadog
-
-Pino 原生支持 Datadog:
-
-```bash
-pnpm add pino-datadog
-```
+`/api/health`、`/api/health/ready`（含无前缀形式）通过 `autoLogging.ignore` 过滤掉访问日志，
+避免探针高频调用污染日志。注意：该过滤只关闭"自动访问日志"，不影响应用日志与上下文。
 
 ## 故障排查
 
-### 问题 1: 日志未输出到文件
+### 日志没有输出到文件
 
-**检查点:**
-1. 确认 `LOG_OUTPUT` 设置为 `file` 或 `both`
-2. 确认 `LOG_DIR` 目录存在且有写权限
-3. 查看控制台是否有权限错误
+1. 确认 `LOG_OUTPUT` 为 `file` 或 `both`。
+2. 确认 `LOG_DIR` 有写权限（模块会自动 `mkdir`）。
+3. **确认 `transport` 写在 `pinoHttp` 内部**——写在外层会被 nestjs-pino 忽略。
 
-**解决方案:**
-```bash
-# 创建日志目录并设置权限
-mkdir -p logs
-chmod 755 logs
+### `error.log` 里出现了 info 日志
+
+`level` 必须写在 transport target 层：
+
+```ts
+{ target: 'pino-roll', level: 'error', options: { /* ... */ } }
 ```
 
-### 问题 2: 日志文件过大
+### 生产 stdout 不是 JSON
 
-**检查点:**
-1. 确认 `LOG_MAX_FILE_SIZE` 配置正确
-2. 确认日志轮转功能正常工作
+检查 `LOG_JSON_FORMAT` 是否被显式设成了 `false`（生产默认 `true`）。
+`LOG_JSON_FORMAT=false` 时控制台走 `pino-pretty`，输出的是人类可读文本而非 JSON。
 
-**解决方案:**
-手动清理旧日志文件:
-```bash
-# 删除 7 天前的日志
-find logs/ -name "*.log.*" -mtime +7 -delete
-```
+### 请求被客户端中断后没有访问日志
 
-### 问题 3: 生产环境日志太多
-
-**解决方案:**
-提高日志级别:
-```bash
-LOG_LEVEL=warn
-```
-
-或禁用调试日志:
-```bash
-# 在特定模块中过滤
-LOG_FILTER_MODULES=UserService,AuthService
-```
-
-## 最佳实践
-
-### 1. 始终记录关键业务操作
-
-```typescript
-✅ 用户登录/登出
-✅ 支付/订单创建
-✅ 权限变更
-✅ 数据删除
-✅ 外部 API 调用
-```
-
-### 2. 敏感信息脱敏
-
-```typescript
-// ❌ 不推荐 - 泄露密码
-this.logger.info('Login attempt', { password: user.password });
-
-// ✅ 推荐 - 只记录必要信息
-this.logger.info('Login attempt', { 
-  userId: user.id, 
-  ip: request.ip 
-});
-```
-
-### 3. 错误日志包含足够上下文
-
-```typescript
-// ❌ 不推荐
-this.logger.error('Database error');
-
-// ✅ 推荐
-this.logger.error('Database query failed', {
-  query: 'SELECT * FROM users WHERE id = ?',
-  params: [userId],
-  error: error.message,
-  stack: error.stack,
-});
-```
-
-### 4. 使用一致的日志格式
-
-团队内统一日志字段命名:
-- `userId` 而非 `user_id` 或 `uid`
-- `requestId` 而非 `req_id`
-- `responseTime` 而非 `duration`
-
-## 迁移指南
-
-### 从 NestJS Logger 迁移
-
-原有代码:
-```typescript
-import { Logger } from '@nestjs/common';
-
-private readonly logger = new Logger(UserService.name);
-this.logger.log('Message');
-```
-
-新代码:
-```typescript
-import { PinoLogger } from 'nestjs-pino';
-
-constructor(private readonly logger: PinoLogger) {}
-this.logger.info('Message');
-```
-
-**注意:**
-- `Logger.log()` → `logger.info()`
-- `Logger.error()` → `logger.error()`
-- `Logger.warn()` → `logger.warn()`
-- `Logger.debug()` → `logger.debug()`
+`pino-http` 会在 `finish` **和** `close` 时产出日志；被中断的请求
+（`res.writableEnded === false`）会被 `customLogLevel` 提升到 `warn` 级别，便于排查。
 
 ## 相关资源
 
 - [Pino 官方文档](https://getpino.io/)
 - [nestjs-pino GitHub](https://github.com/iamolegga/nestjs-pino)
-- [结构化日志最佳实践](https://www.datadoghq.com/blog/best-practices-for-structured-logging/)
+- [pino-roll](https://github.com/mcollina/pino-roll)

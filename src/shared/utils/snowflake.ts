@@ -1,3 +1,5 @@
+import { Logger } from '@nestjs/common';
+
 /**
  * 雪花算法（Snowflake）
  *
@@ -148,7 +150,7 @@ let snowflakeInstance: Snowflake | null = null;
  */
 export const initSnowflake = (workerId: bigint, datacenterId: bigint) => {
   if (snowflakeInstance) {
-    console.warn('Snowflake generator has already been initialized.');
+    Logger.warn('Snowflake generator has already been initialized.');
     return;
   }
 

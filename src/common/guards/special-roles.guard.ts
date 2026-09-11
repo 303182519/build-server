@@ -1,11 +1,18 @@
 import { matchRoles } from '@/shared/utils/roles';
-import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
 import { SpecialRoles } from '../decorators/special-roles.decorator';
 
 @Injectable()
 export class SpecialRolesGuard implements CanActivate {
+  private readonly logger = new Logger(SpecialRolesGuard.name);
+
   constructor(private reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
@@ -14,7 +21,9 @@ export class SpecialRolesGuard implements CanActivate {
       context.getHandler(),
     );
 
-    console.log('requiredSpecialRoles:', requiredRoles);
+    this.logger.debug(
+      `权限校验 requiredSpecialRoles=${JSON.stringify(requiredRoles)}`,
+    );
 
     if (!requiredRoles) {
       return true;

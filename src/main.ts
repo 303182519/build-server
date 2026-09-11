@@ -9,7 +9,14 @@ import { JobBoardService } from './shared/jobs/board/job-board.service';
 import { Logger as PinoLogger } from 'nestjs-pino';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // bufferLogs：启动早期日志先缓存，等 useLogger 桥接后再统一输出，避免丢失启动日志
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: true,
+  });
+
+  // 把 NestJS 全局 Logger 桥接到 pino：业务代码里的 new Logger() / Logger.log()
+  // 也会走结构化日志。否则 pino 只覆盖 HTTP 访问日志，形成两套并行的日志系统。
+  app.useLogger(app.get(PinoLogger));
 
   // 本地开发环境开启跨域，生产环境关闭，原因：生产环境需要在Nginx后开启跨域，Nginx会自动处理跨域问题
   app.enableCors({
@@ -57,7 +64,7 @@ async function bootstrap() {
   app.use(appConfig.board.path, boardMiddleware);
   if (appConfig.board.enabled) {
     Logger.log(
-      `\x1b[34mBull Board: http://127.0.0.1:${server.port}${appConfig.board.path}\x1b[0m`,
+      `Bull Board: http://127.0.0.1:${server.port}${appConfig.board.path}`,
     );
   }
 
@@ -69,10 +76,10 @@ async function bootstrap() {
 
   const serverUrl = `http://127.0.0.1:${server.port}`;
 
-  Logger.log(`\x1b[34mNODE_ENV: ${process.env.NODE_ENV}\x1b[0m`);
-  Logger.log(`\x1b[34mApplication is running on: ${serverUrl}\x1b[0m`);
-  Logger.log(
-    `\x1b[34mSwagger is running on: ${serverUrl}/${swagger.path}\x1b[0m`,
-  );
+  // 不再手工拼接 ANSI 颜色码：日志已统一走 pino，生产环境是 JSON（颜色码会变成噪声），
+  // 开发环境的着色由 pino-pretty 负责。
+  Logger.log(`NODE_ENV: ${process.env.NODE_ENV}`);
+  Logger.log(`Application is running on: ${serverUrl}`);
+  Logger.log(`Swagger is running on: ${serverUrl}/${swagger.path}`);
 }
 void bootstrap();
