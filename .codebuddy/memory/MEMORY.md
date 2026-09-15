@@ -72,4 +72,7 @@
 
 - 异常响应统一由 `GlobalExceptionsFilter`（`@Catch()`，注册在 `common.module.ts` 的 `APP_FILTER`）产出 `StandardResponse`：`code`(HTTP) / `bizCode`(MMSNN 业务码) / `message` / `data` / `path` / `requestId`。
 - 业务错误码按模块分文件（如 `src/common/exceptions/auth.exception.ts` 的 `AuthExceptionCode`），4xx 段与 5xx 段与 HTTP 状态类别保持一致。
+- 模块码分配：Auth=10、**Job=15**（`src/common/exceptions/job.exception.ts`：4xx 段 `154xx`，5xx 段 `155xx`，已用 `15401`/`15402`/`15403`/`15501`/`15503`）。新增 job 业务码必须并入该文件，禁止在 controller 里手写响应体。
+- Jobs SSE 端点约定（`src/shared/jobs/jobs.controller.ts` `GET /jobs/:id/events`）：`@Res()` 手动响应 + `@SkipTimeout()`；响应头必须含 `Content-Type: text/event-stream`（日志侧据此跳过慢请求判定）；前端因需要 `Authorization` 头而用 `fetch` + `ReadableStream` 手动解析（`client/js/export-report-sse.js`），不使用原生 `EventSource`。
+- SSE 连接资源管理约定（2026-09-15 修复后确立，勿回退）：连接计数「检查 + 占用」必须同处同步临界区（中间不得有 await），占用后所有退出路径统一走幂等的 `teardown()`（定时器 / 订阅 / 缓冲 / 计数 / `res.end()`）；**禁止**出现「置位 closed 但不清理」的分支，否则计数只增不减会耗尽上限使全实例 SSE 恒 503。订阅必须早于快照读取（Subject 无回放 + Redis Pub/Sub fire-and-forget，晚订阅会丢终态事件），快照下发前的事件先缓冲再按序回放。单进程上限 100，超出抛 `15503`。
 - 架构决策记录：`docs/architecture/decisions/`（日志相关见 `ADR-002-logging-pipeline.md`）。

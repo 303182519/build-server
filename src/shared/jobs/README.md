@@ -47,6 +47,10 @@ export class CleanupHandler implements IJobHandler {
 - 状态或进度变化发送 `job.updated`
 - `completed` / `failed` / `cancelled` 会发送终态事件并结束流
 - 需要 JWT，与其它 Jobs API 一样不对外裸奔
+- 服务端先建立订阅、再读取快照：`job.snapshot` 之前到达的事件先缓冲，并在快照之后按序回放，
+  避免丢事件（快照）与状态回退（回放顺序）
+- 每 15s 发送一次注释心跳（`: heartbeat`）防止反向代理空闲断连
+- 单进程并发连接上限 100，超出返回 `503` + `bizCode=15503`（唯一响应体为统一信封，非 SSE 流）
 
 事件格式：
 

@@ -6,6 +6,7 @@ export const JobExceptionCode = {
   JOB_HANDLER_NOT_FOUND: '15402',
   JOB_NOT_CANCELLABLE: '15403',
   JOB_REDIS_REQUIRED: '15501',
+  SSE_CONNECTIONS_EXCEEDED: '15503',
 } as const;
 
 export type JobExceptionCode =
@@ -31,5 +32,10 @@ export const JobExceptionMap: Record<JobExceptionCode, ExceptionInfo> = {
     message: '任务系统需要 Redis，请配置 REDIS_URL 或 REDIS_HOST',
     status: HttpStatus.SERVICE_UNAVAILABLE,
     code: JobExceptionCode.JOB_REDIS_REQUIRED,
+  },
+  [JobExceptionCode.SSE_CONNECTIONS_EXCEEDED]: {
+    message: 'SSE 连接数已达上限，请稍后重试',
+    status: HttpStatus.SERVICE_UNAVAILABLE,
+    code: JobExceptionCode.SSE_CONNECTIONS_EXCEEDED,
   },
 };
