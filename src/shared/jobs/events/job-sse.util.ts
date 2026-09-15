@@ -14,10 +14,11 @@ export const resolveJobSseEventName = (status: JobStatus) => {
 
 // ['11','22', '', ''].join('\n')\
 // '11\n22\n\n'
+// id 缺省时省略 id 行（SSE 规范允许）：客户端 Last-Event-ID 保持最后一个数字序列号
 export const formatSseEvent = (event: IJobSseEvent) => {
   return [
     `event: ${event.event}`,
-    `id: ${event.id}`,
+    ...(event.id !== undefined ? [`id: ${event.id}`] : []),
     `data: ${JSON.stringify(event.data)}`,
     '',
     '',

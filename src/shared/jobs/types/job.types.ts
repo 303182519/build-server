@@ -75,7 +75,11 @@ export interface IBullJobData {
 }
 
 export interface IJobSseEvent {
-  id: string;
+  /**
+   * SSE event id。常规事件为递增数字序列号；快照事件不携带 id
+   * （SSE 规范允许省略 id 行，客户端 Last-Event-ID 将保持最后一个数字序列号）。
+   */
+  id?: string;
   event: JobSseEventName;
   data: IJobRunView;
 }

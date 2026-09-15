@@ -143,6 +143,11 @@ export class JobsController {
       if (conn.heartbeat) clearInterval(conn.heartbeat);
       conn.subscription?.unsubscribe();
       conn.pending = [];
+      // 显式摘除监听器：避免 req/res 在 socket 回收前继续持有 teardown 闭包
+      // （含 conn、snapshot 等引用）。监听器尚未注册时 off 为 no-op，安全。
+      req.off('close', teardown);
+      res.off('close', teardown);
+      res.off('error', teardown);
       releaseConnection();
       // 未发送响应头时不 end：鉴权失败要由 GlobalExceptionsFilter 输出统一响应体
       if (res.headersSent && !res.writableEnded && !res.destroyed) {
@@ -204,12 +209,16 @@ export class JobsController {
     res.on('error', teardown);
 
     // ── 5. 权限校验 + 读取快照（未发送 SSE 头，异常可正常返回 HTTP 状态码） ──
-    const snapshot = await this.loadAuthorizedSnapshot(id).catch(
-      (error: unknown) => {
-        teardown(); // headersSent=false，不会 end 响应
-        throw error;
-      },
-    );
+    let snapshot: IJobRunView;
+    try {
+      snapshot = await this.loadAuthorizedSnapshot(id);
+    } catch (error) {
+      teardown(); // headersSent=false，不会 end 响应
+      // 鉴权期间客户端可能已断开（close / error 已触发 teardown）：此时再抛给
+      // 全局过滤器，过滤器向已销毁的 socket 写响应只会产生噪声错误日志，静默退出。
+      if (conn.closed) return;
+      throw error;
+    }
 
     // 鉴权期间客户端可能已断开（close / error 已触发 teardown）
     if (conn.closed) return;
@@ -235,8 +244,9 @@ export class JobsController {
 
     // ── 8. 下发快照，并回放订阅期间缓冲的事件 ──
     conn.streaming = true;
+    // 快照不携带 id：省略 id 行使客户端 Last-Event-ID 保持最后一个数字序列号，
+    // 避免 'snapshot' 这类非序列号 id 污染重连语义
     const snapshotEvent = formatSseEvent({
-      id: 'snapshot',
       event: JOB_SSE_EVENT.SNAPSHOT,
       data: snapshot,
     });
