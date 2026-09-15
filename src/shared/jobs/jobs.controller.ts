@@ -253,6 +253,10 @@ export class JobsController {
     conn.pending = [];
     for (const event of buffered) {
       if (conn.closed) break;
+      // 跳过早于快照的缓冲事件：其状态变更已被快照读取点包含，
+      // 回放会导致状态回退（如进度从 50% 倒退回 10%）。
+      // 边界：updatedAt 相同表示同一行同一时刻的快照，跳过是安全的。
+      if (event.data.updatedAt <= snapshot.updatedAt) continue;
       dispatch(event);
     }
   }

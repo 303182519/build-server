@@ -55,6 +55,9 @@ export interface IJobRunView {
   createdBy?: string | null;
   startedAt?: Date | null;
   finishedAt?: Date | null;
+  // updatedAt 用于 SSE 回放去重：订阅到快照下发之间缓冲的事件若早于快照读取点，
+  // 其状态变更已被快照包含，回放会导致状态回退（如进度从 50% 倒退回 10%）。
+  updatedAt: Date;
   createdAt: Date;
 }
 

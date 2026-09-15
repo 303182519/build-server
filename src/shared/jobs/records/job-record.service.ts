@@ -56,6 +56,7 @@ export class JobRecordService {
       createdBy: row.createdBy ? row.createdBy.toString() : null,
       startedAt: row.startedAt,
       finishedAt: row.finishedAt,
+      updatedAt: row.updatedAt,
       createdAt: row.createdAt,
     };
   }
