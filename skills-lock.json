@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "eli5": {
+      "source": "dreambigou/eli5",
+      "sourceType": "github",
+      "skillPath": "skills/eli5/SKILL.md",
+      "computedHash": "ebe7a298b60d28ac26da8aa505d28dc97d124882abc7f33eddeb0d01e9852058"
+    },
     "prisma-cli": {
       "source": "prisma/skills",
       "sourceType": "github",
