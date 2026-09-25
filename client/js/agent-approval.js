@@ -19,6 +19,8 @@
   let accessToken = null;
   let currentRunId = null;
   let abortController = null;
+  // 本次连接是否已收到终态事件：用于区分「运行正常结束后服务端关流」与「异常断开」
+  let terminalReceived = false;
 
   // ─── DOM 引用 ──────────────────────────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
@@ -113,10 +115,13 @@
 
     if (run.error) {
       showError(`运行失败：${run.error}`);
+      decideHint.textContent = '运行失败';
     } else if (run.result && run.result.postId) {
       showResult(`副作用执行成功，已创建文章草稿 postId=${run.result.postId}`);
+      decideHint.textContent = '已完成，文章草稿已创建';
     } else if (run.status === 'REJECTED') {
       showResult(`已拒绝${run.reason ? `：${run.reason}` : ''}`);
+      decideHint.textContent = '已拒绝';
     } else {
       clearFeedback();
     }
@@ -152,6 +157,7 @@
 
     const url = `/api/agent/runs/${runId}/events`;
     appendLog('SSE', `连接 ${url}`);
+    terminalReceived = false;
 
     try {
       const resp = await fetch(url, {
@@ -187,7 +193,13 @@
         }
       }
 
-      appendLog('SSE', '连接已关闭（服务端断开）');
+      appendLog(
+        'SSE',
+        terminalReceived
+          ? '运行已结束，SSE 连接正常关闭'
+          : '连接已关闭（服务端在终态前断开，可重新订阅恢复现场）',
+      );
+      if (terminalReceived) subscribeHint.textContent = '运行已结束';
     } catch (err) {
       if (err.name === 'AbortError') {
         appendLog('SSE', '已取消订阅');
@@ -223,6 +235,14 @@
 
     if (data && typeof data === 'object') {
       updateRunUI(data);
+      // 与后端终态口径保持一致：REJECTED / 已产出 result / 有 error
+      if (
+        data.status === 'REJECTED' ||
+        (data.result && data.result.postId) ||
+        data.error
+      ) {
+        terminalReceived = true;
+      }
     }
   }
 
@@ -322,9 +342,17 @@
         }),
       });
       updateRunUI(run);
-      decideHint.textContent = approve
-        ? '已批准，正在执行副作用…'
-        : '已拒绝';
+      // /decide 在服务端会 await 完整个图执行才返回，因此这里可能已是终态，
+      // 不能无条件覆盖 SSE 已更新的终态提示
+      if (!approve) {
+        decideHint.textContent = '已拒绝';
+      } else if (run.result && run.result.postId) {
+        decideHint.textContent = '已完成，文章草稿已创建';
+      } else if (run.error) {
+        decideHint.textContent = '运行失败';
+      } else {
+        decideHint.textContent = '已批准，正在执行副作用…';
+      }
     } catch (err) {
       decideHint.textContent = `操作失败：${err.message}`;
       approveBtn.disabled = false;

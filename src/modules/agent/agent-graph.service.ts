@@ -172,7 +172,7 @@ export class AgentGraphService implements OnModuleDestroy {
       threadId: state.threadId,
       draft: state.draft,
     });
-
+    console.log('waitForApproval-----------', decision);
     const { approved, reason } = decision as {
       approved: boolean;
       reason?: string;

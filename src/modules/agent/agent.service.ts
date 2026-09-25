@@ -81,6 +81,7 @@ export class AgentService {
 
     // 批准：恢复图执行副作用
     try {
+      console.log('resumeRun-----------', run.threadId, approve, reason);
       await this.graph.resumeRun(run.threadId, approve, reason);
     } catch (err) {
       this.logger.error(

@@ -110,11 +110,15 @@ export class AgentEventsService implements OnModuleDestroy {
     return nextEvent;
   }
 
-  /** 订阅指定 threadId 的事件流 */
-  subscribe(threadId: string): Observable<IAgentSseEvent> {
+  /**
+   * 订阅指定 Agent 运行的事件流。
+   * 入参必须是 runId（agent_approvals.id，对应 SSE 路由 /runs/:id/events 的 :id），
+   * 按 event.data.id 过滤；不能用 threadId——runId 与 threadId 是两个不同的 snowflake。
+   */
+  subscribe(runId: string): Observable<IAgentSseEvent> {
     return this.events$
       .asObservable()
-      .pipe(filter((event) => event.data.threadId === threadId));
+      .pipe(filter((event) => event.data.id === runId));
   }
 
   async onModuleDestroy(): Promise<void> {
