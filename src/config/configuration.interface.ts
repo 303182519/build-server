@@ -101,6 +101,15 @@ export interface BoardConfig {
   readOnly: boolean;
 }
 
+export interface QwenConfig {
+  /** 千问 API Key，为空则禁用 Agent 模块（调用时返回 503，不影响启动） */
+  apiKey?: string;
+  /** OpenAI 兼容模式调用地址（.../compatible-mode/v1） */
+  baseUrl?: string;
+  /** 模型名，默认 qwen-plus */
+  model?: string;
+}
+
 export interface LoggerConfig {
   /** 日志级别：trace < debug < info < warn < error < fatal */
   level?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal' | 'silent';
@@ -139,6 +148,7 @@ export interface AppConfig {
   upload?: UploadConfig;
   s3?: S3Config;
   logger?: LoggerConfig;
+  qwen?: QwenConfig;
 }
 
 export type AppConfigForced = {

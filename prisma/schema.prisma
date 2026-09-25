@@ -218,6 +218,38 @@ model PostTag {
 }
 
 // ----------------------------------------------------------------------------
+// AgentApproval —— Agent 人工审批记录（agent_approvals）
+// ----------------------------------------------------------------------------
+// LangGraph human-in-the-loop 的审批域（权威数据源在 MySQL，图状态 checkpoint 在 Redis）：
+// 一次 run 对应一条审批记录（threadId 唯一）：
+//   发起 run → 建行（status=PENDING, payload=NULL 表示草稿生成中）
+//   → Qwen 草稿完成 → 回填 payload → 等待人工
+//   → decide 原子流转 APPROVED / REJECTED（decidedAt 落时间）
+//   → APPROVED 后 resume 图执行副作用（创建文章草稿），结果落 result / error / executedAt。
+// 不建用户外键：审批记录是审计数据，应独立于用户生命周期（与 job_runs.createdBy 同理）。
+model AgentApproval {
+  id        BigInt    @id // 雪花ID，代码层生成
+  createdAt DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+
+  threadId   String   @unique @map("thread_id") @db.VarChar(64) // LangGraph thread_id（雪花字符串）
+  userId     BigInt   @map("user_id") // 发起人（唯一有审批权的人）
+  prompt     String   @db.VarChar(1000) // 用户原始诉求
+  actionType String   @default("create_post_draft") @map("action_type") @db.VarChar(64)
+  payload    Json?    @db.Json // 待审批内容（Qwen 生成的文章草稿）；NULL = 草稿生成中/失败
+  status     String   @default("PENDING") @db.VarChar(16) // PENDING / APPROVED / REJECTED
+
+  decidedAt  DateTime? @map("decided_at") @db.DateTime(3)
+  reason     String?   @db.VarChar(500) // 审批意见（拒绝理由等）
+  executedAt DateTime? @map("executed_at") @db.DateTime(3) // 副作用执行完成时间（成功或失败）
+  result     Json?     @db.Json // 副作用结果（如 { postId }）
+  error      String?   @db.Text // 草稿生成失败 / 副作用执行失败的错误信息
+
+  @@index([userId, status])
+  @@map("agent_approvals")
+}
+
+// ----------------------------------------------------------------------------
 // JobRun —— 任务执行记录（job_runs）
 // ----------------------------------------------------------------------------
 // 任务中心（前端）与 Bull Board 的分界：job_runs 存业务任务生命周期

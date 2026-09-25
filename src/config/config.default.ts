@@ -91,6 +91,12 @@ export const defaultConfig = registerAs('default', (): AppConfig => ({
     secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || undefined,
     publicBaseUrl: process.env.S3_PUBLIC_BASE_URL || undefined,
   },
+  qwen: {
+    // 为空则禁用 Agent 模块（调用时返回 503，不影响启动）
+    apiKey: process.env.QIANWEN_API_KEY,
+    baseUrl: process.env.QWEN_API_URL,
+    model: process.env.QWEN_MODEL || 'qwen3.8-max-0902',
+  },
   logger: {
     level: (process.env.LOG_LEVEL as LoggerConfig['level']) || 'info',
     includeContext: process.env.LOG_INCLUDE_CONTEXT !== 'false',

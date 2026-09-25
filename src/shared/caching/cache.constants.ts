@@ -48,5 +48,4 @@ export const CacheKeys = {
 
   // 热门文章排行榜 ZSET：member=post id，score=浏览数。全局唯一，无参数。
   TRENDING_POSTS: 'hot:posts',
-
 } as const;

@@ -120,7 +120,7 @@ export class HashCacheService {
     const redisKey = this.prefixer.prefix(key);
     return withRedis(
       this.redis,
-      (r) => r.hGet(redisKey, field) as Promise<string | null>,
+      (r) => r.hGet(redisKey, field),
       null,
       'HashCacheService.hget',
     );

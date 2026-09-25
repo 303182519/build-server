@@ -49,7 +49,6 @@ import { GithubOAuthProvider } from './github-oauth.provider';
 import { OAuthStateService } from './oauth-state.service';
 import { OAuthTicketService } from './oauth-ticket.service';
 
-
 @Controller('auth')
 export class AuthController {
   private readonly logger = new Logger(AuthController.name);
@@ -177,17 +176,17 @@ export class AuthController {
     summary: 'GitHub 回调：校验 state → 换 token → 签发 ticket → 302 跳前端',
   })
   @ApiExceptionEnvelope(AuthExceptionMap, AuthExceptionCode.OAUTH_FAILED)
-  @ApiExceptionEnvelope(
-    AuthExceptionMap,
-    AuthExceptionCode.OAUTH_STATE_INVALID,
-  )
+  @ApiExceptionEnvelope(AuthExceptionMap, AuthExceptionCode.OAUTH_STATE_INVALID)
   @ApiExceptionEnvelope(
     AuthExceptionMap,
     AuthExceptionCode.OAUTH_EXCHANGE_FAILED,
   )
   @Throttle({ default: AUTH_THROTTLE.login })
   @Public()
-  async githubCallback(@Query() query: GithubCallbackDto, @Res() res: Response) {
+  async githubCallback(
+    @Query() query: GithubCallbackDto,
+    @Res() res: Response,
+  ) {
     if (query.error) {
       // 用户在 GitHub 点了"拒绝"。error_description 是 GitHub 的文案，不透传给前端
       // （统一用我们自己的 OAUTH_FAILED 文案，避免上游字符串直接暴露给 API 消费方）

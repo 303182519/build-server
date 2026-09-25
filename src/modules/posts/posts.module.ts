@@ -13,5 +13,7 @@ import { TrendingService } from './trending.service';
     // 仓储抽象层：业务层只依赖 PostsRepository 接口，实现可替换。
     { provide: POSTS_REPOSITORY, useClass: PrismaPostsRepository },
   ],
+  // Agent 模块复用 PostsService 执行"创建文章草稿"副作用
+  exports: [PostsService],
 })
 export class PostsModule {}

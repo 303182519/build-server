@@ -33,11 +33,9 @@ export class OAuthStateService {
     const state = randomBytes(16).toString('hex');
     if (this.redis) {
       // SET key value EX ttl：state 本身作为 value（不需要带额外载荷，存在即有效）
-      await this.redis.set(
-        CacheKeys.AUTH_OAUTH_STATE(state),
-        '1',
-        { EX: STATE_TTL_SECONDS },
-      );
+      await this.redis.set(CacheKeys.AUTH_OAUTH_STATE(state), '1', {
+        EX: STATE_TTL_SECONDS,
+      });
       return state;
     }
     this.fallback.set(state, Date.now() + STATE_TTL_SECONDS * 1000);

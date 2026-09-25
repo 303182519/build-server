@@ -47,7 +47,9 @@ services:
   # ── Redis：缓存 / 任务队列 ──────────────────────────────────────────────
   # 同样不映射 host 端口，仅内网可达。
   redis:
-    image: redis:7-alpine
+    # Redis 8 起内置 RedisJSON / RediSearch 模块（LangGraph RedisSaver checkpoint 依赖）。
+    # 客户端协议与 7 兼容，缓存 / BullMQ 不受影响。
+    image: redis:8-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "allkeys-lru"]
     volumes:

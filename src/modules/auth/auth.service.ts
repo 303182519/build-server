@@ -132,7 +132,7 @@ export class AuthService {
       } catch (e) {
         if (
           e instanceof Prisma.PrismaClientKnownRequestError &&
-          e.code === 'P2002'  // 唯一索引冲突，重复值
+          e.code === 'P2002' // 唯一索引冲突，重复值
         ) {
           identity = await this.prisma.userIdentity.findUnique({
             where: {

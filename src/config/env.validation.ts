@@ -74,6 +74,11 @@ export const validationSchema = Joi.object({
   S3_SECRET_ACCESS_KEY: Joi.string().allow(''),
   S3_PUBLIC_BASE_URL: Joi.string().allow(''),
 
+  // 千问（Qwen）LLM —— Agent 模块；不配置则 Agent 调用返回 503，不影响启动
+  QIANWEN_API_KEY: Joi.string().allow(''),
+  QWEN_API_URL: Joi.string().uri().allow(''),
+  QWEN_MODEL: Joi.string().default('qwen-plus'),
+
   // Pino Logger (日志)
   LOG_LEVEL: Joi.string()
     .valid('trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent')
