@@ -95,7 +95,7 @@ export const defaultConfig = registerAs('default', (): AppConfig => ({
     // 为空则禁用 Agent 模块（调用时返回 503，不影响启动）
     apiKey: process.env.QIANWEN_API_KEY,
     baseUrl: process.env.QWEN_API_URL,
-    model: process.env.QWEN_MODEL || 'qwen3.8-max-0902',
+    model: process.env.QWEN_MODEL || 'qwen-plus',
   },
   logger: {
     level: (process.env.LOG_LEVEL as LoggerConfig['level']) || 'info',
