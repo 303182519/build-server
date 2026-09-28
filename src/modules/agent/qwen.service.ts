@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ChatOpenAI } from '@langchain/openai';
+import type { RunnableConfig } from '@langchain/core/runnables';
 import { getConfig } from '@/config/configuration';
 import {
   ErrorException,
@@ -58,17 +59,28 @@ export class QwenService {
   }
 
   /**
-   * 调用 Qwen 生成文章草稿；失败时抛 ErrorException
+   * 调用 Qwen 生成文章草稿；失败时抛 ErrorException。
+   *
+   * 透传 LangGraph 节点的 RunnableConfig：其中包含 graph.stream(streamMode:'messages')
+   * 注入的 StreamMessagesHandler 回调，model.invoke 内部仍以流式执行，token 分片
+   * 会被图运行循环拦截并转成 message.delta 事件；signal 也随 config 透传，
+   * 支持 run 取消时中断 LLM 请求。
    */
-  async generateDraft(prompt: string): Promise<IAgentDraft> {
+  async generateDraft(
+    prompt: string,
+    config?: RunnableConfig,
+  ): Promise<{ draft: IAgentDraft; raw: string }> {
     const model = this.getModel();
 
     let raw: string;
     try {
-      const response = await model.invoke([
-        { role: 'system', content: DRAFT_SYSTEM_PROMPT },
-        { role: 'user', content: prompt },
-      ]);
+      const response = await model.invoke(
+        [
+          { role: 'system', content: DRAFT_SYSTEM_PROMPT },
+          { role: 'user', content: prompt },
+        ],
+        config,
+      );
       raw = typeof response.content === 'string' ? response.content : '';
     } catch (err) {
       this.logger.error(
@@ -77,7 +89,7 @@ export class QwenService {
       throw new ErrorException(ErrorExceptionCode.GRAPH_INTERRUPT_FAILED);
     }
 
-    return this.parseDraft(raw);
+    return { draft: this.parseDraft(raw), raw };
   }
 
   /**

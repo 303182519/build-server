@@ -1,11 +1,16 @@
-import { IAgentSseEvent } from './agent.types';
+import { IAgentStreamEntry } from './agent.types';
 
-/** 与 job-sse.util.ts 同构，但针对 Agent 事件类型，避免跨模块类型耦合 */
-export const formatAgentSseEvent = (event: IAgentSseEvent): string => {
+/**
+ * 格式化为 SSE 协议帧：
+ *   - id:    Redis Stream entry id（浏览器自动作为 Last-Event-ID 断线续传）
+ *   - event: AgentEventType（run.started / message.delta / ...）
+ *   - data:  AgentEvent 完整信封（含 eventId / runId / sequence / timestamp / data）
+ */
+export const formatAgentSseEvent = (entry: IAgentStreamEntry): string => {
   return [
-    `event: ${event.event}`,
-    ...(event.id !== undefined ? [`id: ${event.id}`] : []),
-    `data: ${JSON.stringify(event.data)}`,
+    `id: ${entry.transportId}`,
+    `event: ${entry.event.type}`,
+    `data: ${JSON.stringify(entry.event)}`,
     '',
     '',
   ].join('\n');

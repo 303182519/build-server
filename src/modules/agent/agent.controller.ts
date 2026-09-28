@@ -10,7 +10,6 @@ import {
   Res,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
-import { Subscription } from 'rxjs';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -34,25 +33,33 @@ import {
 } from '@/common/exceptions/agent.exception';
 import { formatAgentSseEvent } from './agent-sse.util';
 import { AgentService } from './agent.service';
-import { AgentEventsService } from './agent-events.service';
-import { ApprovalService } from './approval.service';
+import {
+  AgentEventTail,
+  AgentEventsService,
+  isValidStreamId,
+} from './agent-events.service';
 import { StartRunDto } from './dto/start-run.dto';
 import { DecideRunDto } from './dto/decide-run.dto';
+import { CancelRunDto } from './dto/cancel-run.dto';
 import {
   AGENT_RUN_STATUS,
-  AGENT_SSE_EVENT,
+  AGENT_TERMINAL_EVENT_TYPES,
   IAgentRunView,
-  IAgentSseEvent,
 } from './agent.types';
 
 /** SSE 心跳间隔（ms），需小于反向代理空闲超时 */
 const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
 /** 全局并发 SSE 连接数上限 */
 const MAX_SSE_CONNECTIONS = 100;
-/** 快照下发前允许缓冲的事件数上限 */
-const MAX_PENDING_SSE_EVENTS = 100;
 
 const idParam = ApiParam({ name: 'id', description: 'agent_approvals.id' });
+
+/** 运行视图是否已是终态（APPROVED 但副作用执行中不算终态） */
+const isTerminalView = (run: IAgentRunView): boolean =>
+  run.status === AGENT_RUN_STATUS.REJECTED ||
+  run.status === AGENT_RUN_STATUS.CANCELLED ||
+  run.executedAt !== null ||
+  run.error !== null;
 
 @ApiTags('Agent - 人工审批工作流')
 @ApiBearerAuth()
@@ -64,7 +71,6 @@ export class AgentController {
   constructor(
     private readonly agentService: AgentService,
     private readonly agentEvents: AgentEventsService,
-    private readonly approval: ApprovalService,
   ) {}
 
   @Post('runs')
@@ -82,7 +88,7 @@ export class AgentController {
   @ApiQuery({
     name: 'status',
     required: false,
-    enum: ['PENDING', 'APPROVED', 'REJECTED'],
+    enum: ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'],
   })
   listRuns(@UserInfo() user: User, @Query('status') status?: string) {
     return this.agentService.listRuns(user.id, status);
@@ -111,12 +117,35 @@ export class AgentController {
     return this.agentService.decideRun(id, user.id, dto.approve, dto.reason);
   }
 
+  @Post('runs/:id/cancel')
+  @ApiOperation({ summary: '取消 Agent 运行（仅 PENDING 状态可取消）' })
+  @idParam
+  @ApiExceptionEnvelope(AgentExceptionMap, AgentExceptionCode.RUN_NOT_FOUND)
+  @ApiExceptionEnvelope(AgentExceptionMap, AgentExceptionCode.RUN_NOT_OWNER)
+  @ApiExceptionEnvelope(
+    AgentExceptionMap,
+    AgentExceptionCode.RUN_NOT_CANCELLABLE,
+  )
+  cancel(
+    @Param('id', ParseSnowflakePipe) id: bigint,
+    @Body() dto: CancelRunDto,
+    @UserInfo() user: User,
+  ) {
+    return this.agentService.cancelRun(id, user.id, dto.reason);
+  }
+
   /**
-   * SSE 订阅单个 Agent 运行事件。
-   * 逻辑与 JobsController#getEvents 同构：连接上限、心跳、快照 + 缓冲回放。
+   * SSE 订阅单个 Agent 运行的事件流（run.started / message.delta / ...）。
+   *
+   * 基于 Redis Stream：
+   *   1. 连接时先做鉴权快照（DB），异常在 SSE 头发送前以 HTTP 错误返回；
+   *   2. XRANGE 回放 Last-Event-ID 之后的历史事件（断线续传）；
+   *   3. XREAD BLOCK 尾读新事件；
+   *   4. 收到 run.completed / run.cancelled / error 终态事件后断开；
+   *   5. XREAD 异常时结束响应，浏览器 EventSource 会带 Last-Event-ID 自动重连。
    */
   @Get('runs/:id/events')
-  @ApiOperation({ summary: '订阅单个 Agent 运行事件（SSE）' })
+  @ApiOperation({ summary: '订阅单个 Agent 运行事件流（SSE）' })
   @idParam
   @SkipTimeout()
   async getEvents(
@@ -138,20 +167,17 @@ export class AgentController {
       AgentController.activeSseConnections--;
     };
 
-    const conn = {
-      closed: false,
-      streaming: false,
-      pending: [] as IAgentSseEvent[],
-      heartbeat: undefined as NodeJS.Timeout | undefined,
-      subscription: undefined as Subscription | undefined,
-    };
+    const conn: {
+      closed: boolean;
+      heartbeat?: NodeJS.Timeout;
+      tail?: AgentEventTail;
+    } = { closed: false };
 
     const teardown = () => {
       if (conn.closed) return;
       conn.closed = true;
       if (conn.heartbeat) clearInterval(conn.heartbeat);
-      conn.subscription?.unsubscribe();
-      conn.pending = [];
+      void conn.tail?.close().catch(() => undefined);
       req.off('close', teardown);
       res.off('close', teardown);
       res.off('error', teardown);
@@ -183,34 +209,7 @@ export class AgentController {
       return false;
     };
 
-    const dispatch = (event: IAgentSseEvent) => {
-      if (!conn.streaming) {
-        if (conn.pending.length >= MAX_PENDING_SSE_EVENTS) {
-          conn.pending.shift();
-        }
-        conn.pending.push(event);
-        return;
-      }
-      if (!write(formatAgentSseEvent(event))) return;
-      // 终态事件（COMPLETED / FAILED / REJECTED）后断开
-      if (
-        event.event === AGENT_SSE_EVENT.COMPLETED ||
-        event.event === AGENT_SSE_EVENT.FAILED ||
-        (event.event === AGENT_SSE_EVENT.DECIDED &&
-          event.data.status === AGENT_RUN_STATUS.REJECTED)
-      ) {
-        teardown();
-      }
-    };
-
-    // 先订阅，再读快照：避免快照读取与订阅建立之间的事件丢失
-    conn.subscription = this.agentEvents.subscribe(id).subscribe(dispatch);
-
-    req.on('close', teardown);
-    res.on('close', teardown);
-    res.on('error', teardown);
-
-    // 鉴权 + 快照（未发送 SSE 头，异常可直接返回 HTTP 错误）
+    // ── 1. 鉴权快照（SSE 头发送前，异常可直接返回 HTTP 错误）──
     let snapshot: IAgentRunView;
     try {
       const currentUser = useRequestUser();
@@ -220,6 +219,11 @@ export class AgentController {
       if (conn.closed) return;
       throw error;
     }
+
+    // ── 2. 断线续传游标 + 历史回放（Redis Stream 持久缓冲）──
+    const headerLastId = req.header('last-event-id');
+    const afterId = isValidStreamId(headerLastId) ? headerLastId : undefined;
+    const backlog = await this.agentEvents.listBacklog(id, afterId);
 
     if (conn.closed) return;
 
@@ -238,30 +242,64 @@ export class AgentController {
       write(': heartbeat\n\n');
     }, SSE_HEARTBEAT_INTERVAL_MS);
 
-    conn.streaming = true;
-    const snapshotEvent = formatAgentSseEvent({
-      event: AGENT_SSE_EVENT.SNAPSHOT,
-      data: snapshot,
-    });
+    req.on('close', teardown);
+    res.on('close', teardown);
+    res.on('error', teardown);
 
-    if (!write(snapshotEvent)) return;
+    // 回放历史事件（XREAD 从最后一条回放事件之后开始，不重不漏）
+    for (const entry of backlog) {
+      if (conn.closed) return;
+      if (!write(formatAgentSseEvent(entry))) return;
+      if (AGENT_TERMINAL_EVENT_TYPES.includes(entry.event.type)) {
+        teardown();
+        return;
+      }
+    }
 
-    // 快照已是终态：直接断开
-    const isTerminal =
-      snapshot.status !== AGENT_RUN_STATUS.PENDING || snapshot.error !== null;
-    if (isTerminal) {
+    // 快照已终态且 stream 中没有任何事件（stream 过期 / 从未产生）：直接断开
+    if (backlog.length === 0 && isTerminalView(snapshot)) {
       teardown();
       return;
     }
 
-    const buffered = conn.pending;
-    conn.pending = [];
-    for (const event of buffered) {
-      if (conn.closed) break;
-      // 跳过早于快照的缓冲事件，避免状态回退
-      if (event.data.updatedAt <= snapshot.updatedAt) continue;
-      dispatch(event);
+    // ── 3. XREAD BLOCK 尾读新事件 ──
+    const tailStartId = backlog.length
+      ? backlog[backlog.length - 1].transportId
+      : afterId;
+
+    try {
+      conn.tail = await this.agentEvents.createTail(id, {
+        afterId: tailStartId,
+      });
+    } catch (err) {
+      this.logger.error(
+        `创建 Agent 事件尾读失败 agentRunId=${id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      teardown();
+      return;
     }
+
+    for await (const entry of conn.tail) {
+      if (conn.closed) return;
+      if (entry === null) {
+        // BLOCK 超时无新事件：终态 run 不再等待；非终态 run 继续保活
+        if (isTerminalView(snapshot)) {
+          teardown();
+          return;
+        }
+        continue;
+      }
+      if (!write(formatAgentSseEvent(entry))) return;
+      if (AGENT_TERMINAL_EVENT_TYPES.includes(entry.event.type)) {
+        teardown();
+        return;
+      }
+    }
+
+    // 尾读迭代器结束（XREAD 连接错误等）：关闭连接，浏览器凭 Last-Event-ID 重连
+    teardown();
   }
 
   // 健康检查：确认 Agent 模块可用（LLM 配置是否齐全）

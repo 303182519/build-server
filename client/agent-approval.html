@@ -52,6 +52,7 @@
         .badge.pending { background: #bf8700; }
         .badge.approved { background: #1a7f37; }
         .badge.rejected { background: #cf222e; }
+        .badge.cancelled { background: #6e7781; }
         .badge.active { background: #0969da; }
         #sse-log {
             max-height: 300px;
@@ -106,9 +107,10 @@
 <body>
     <h1>Agent 人工审批工作流示例</h1>
     <p class="tip">
-        流程：登录 → POST /api/agent/runs 发起运行 → Qwen 生成草稿 → SSE 收到
-        <code>agent.draft_ready</code> → 用户点击批准/拒绝 →
-        POST /api/agent/runs/:id/decide → 批准后自动创建文章草稿。
+        流程：登录 → POST /api/agent/runs 发起运行 → SSE 实时推送
+        <code>message.delta</code>（Qwen 流式草稿）→ <code>interrupt</code>（等待审批）→
+        POST /api/agent/runs/:id/decide 批准/拒绝（或 /cancel 取消）→
+        批准后 <code>tool.started / tool.completed</code> 创建文章草稿 → <code>run.completed</code>。
     </p>
 
     <section>
@@ -135,8 +137,9 @@
         <button id="subscribe-btn">订阅</button>
         <span id="subscribe-hint" class="tip"></span>
         <p class="tip">
-            SSE 连接建立后服务端会先下发 <code>agent.snapshot</code> 补发当前状态，
-            任意时刻重连都能恢复现场。
+            订阅前会先 GET /api/agent/runs/:id 拉取快照渲染当前状态；SSE 基于
+            Redis Stream，断线自动携带 <code>Last-Event-ID</code> 重连，
+            历史事件回放补发、不重不漏。
         </p>
     </section>
 
@@ -148,6 +151,16 @@
         <div class="kv">prompt：<span id="run-prompt">-</span></div>
         <div id="run-error" class="error hidden"></div>
         <div id="run-result" class="result hidden"></div>
+        <div style="margin-top: 8px;">
+            <button id="cancel-btn" class="reject hidden">取消运行</button>
+            <span id="cancel-hint" class="tip"></span>
+        </div>
+    </section>
+
+    <section id="stream-section" class="hidden">
+        <h2>草稿生成中（message.delta 流式输出）</h2>
+        <div id="stream-output" class="draft-content"
+             style="background:#f6f8fa;border-radius:6px;padding:10px;"></div>
     </section>
 
     <section id="draft-section" class="hidden">
@@ -160,7 +173,7 @@
         </div>
         <div>
             <label>审批意见</label>
-            <input id="reason" placeholder="拒绝时请填写理由" size="50">
+            <input id="reason" placeholder="拒绝/取消时可填写理由" size="50">
         </div>
         <button id="approve-btn" class="approve">批准并创建文章草稿</button>
         <button id="reject-btn" class="reject">拒绝</button>

@@ -6,6 +6,7 @@ export const AgentExceptionCode = {
   RUN_NOT_FOUND: '17401',
   RUN_NOT_PENDING: '17402',
   RUN_NOT_OWNER: '17403',
+  RUN_NOT_CANCELLABLE: '17404',
   SSE_CONNECTIONS_EXCEEDED: '17503',
   GRAPH_INTERRUPT_FAILED: '17502',
 } as const;
@@ -33,6 +34,11 @@ export const AgentExceptionMap: Record<AgentExceptionCode, ExceptionInfo> = {
     message: '无权操作该 Agent 运行',
     status: HttpStatus.FORBIDDEN,
     code: AgentExceptionCode.RUN_NOT_OWNER,
+  },
+  [AgentExceptionCode.RUN_NOT_CANCELLABLE]: {
+    message: '当前运行不可取消（非 PENDING 状态）',
+    status: HttpStatus.CONFLICT,
+    code: AgentExceptionCode.RUN_NOT_CANCELLABLE,
   },
   [AgentExceptionCode.SSE_CONNECTIONS_EXCEEDED]: {
     message: 'SSE 连接数已达上限，请稍后重试',

@@ -124,6 +124,39 @@ export class ApprovalService {
     return this.getById(id);
   }
 
+  /**
+   * 发起人取消运行：仅当 status=PENDING 时原子流转为 CANCELLED。
+   * 草稿生成中 / 等待审批中的 run 均可取消；updateMany 条件防止并发重复取消。
+   */
+  async cancel(
+    id: bigint,
+    userId: bigint,
+    reason?: string,
+  ): Promise<IAgentRunView> {
+    // 先查一次做归属校验，避免把非本人的记录流转了
+    const existing = await this.prisma.agentApproval.findUnique({
+      where: { id },
+    });
+    if (!existing) throw new ErrorException(ErrorExceptionCode.RUN_NOT_FOUND);
+    if (existing.userId !== userId)
+      throw new ErrorException(ErrorExceptionCode.RUN_NOT_OWNER);
+
+    const updated = await this.prisma.agentApproval.updateMany({
+      where: { id, status: AGENT_RUN_STATUS.PENDING },
+      data: {
+        status: AGENT_RUN_STATUS.CANCELLED,
+        ...(reason !== undefined ? { reason } : {}),
+      },
+    });
+
+    if (updated.count === 0) {
+      // 并发下已被审批/取消，或状态早已不是 PENDING
+      throw new ErrorException(ErrorExceptionCode.RUN_NOT_CANCELLABLE);
+    }
+
+    return this.getById(id);
+  }
+
   /** 副作用执行完成，记录结果（postId）或错误 */
   async markExecuted(
     id: bigint,

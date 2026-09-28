@@ -6,8 +6,9 @@ import {
 } from '@/common/exceptions/error.exception';
 import { ApprovalService } from './approval.service';
 import { AgentGraphService } from './agent-graph.service';
+import { AgentEventsService } from './agent-events.service';
 import { QwenService } from './qwen.service';
-import { IAgentRunView } from './agent.types';
+import { AGENT_EVENT_TYPE, IAgentRunView } from './agent.types';
 
 @Injectable()
 export class AgentService {
@@ -17,6 +18,7 @@ export class AgentService {
     private readonly approval: ApprovalService,
     private readonly graph: AgentGraphService,
     private readonly qwen: QwenService,
+    private readonly events: AgentEventsService,
   ) {}
 
   /**
@@ -66,7 +68,9 @@ export class AgentService {
   /**
    * 用户审批：
    * 1. DB 原子流转 PENDING → APPROVED/REJECTED（防并发重复审批）
-   * 2. 恢复 LangGraph 继续执行副作用
+   * 2. 无论批准/拒绝都恢复图（Command resume）：
+   *    批准 → 执行副作用；拒绝 → 路由到 END。
+   *    恢复后图运行循环统一发 run.completed（run.status 区分终态）。
    */
   async decideRun(
     id: bigint,
@@ -76,21 +80,45 @@ export class AgentService {
   ): Promise<IAgentRunView> {
     const run = await this.approval.decide(id, userId, approve, reason);
 
-    // 拒绝：不恢复图执行，直接返回
-    if (!approve) return run;
-
-    // 批准：恢复图执行副作用
     try {
-      console.log('resumeRun-----------', run.threadId, approve, reason);
       await this.graph.resumeRun(run.threadId, approve, reason);
     } catch (err) {
       this.logger.error(
         `resumeRun 异常: ${err instanceof Error ? err.message : String(err)}`,
       );
-      // 恢复失败不影响审批状态本身；记录错误并返回最新视图
+      // 恢复失败不影响审批状态本身；错误事件已由图循环下发，返回最新视图
       return this.approval.getById(id);
     }
 
     return this.approval.getById(id);
+  }
+
+  /**
+   * 发起人取消运行（仅 PENDING 可取消）：
+   * 1. DB 原子流转 PENDING → CANCELLED（防并发：与审批互斥）
+   * 2. 草稿生成中：abort 图执行，终态 run.cancelled 事件由图循环兜底
+   * 3. 挂起等待审批：删除 checkpoint，并直接下发 run.cancelled 事件
+   */
+  async cancelRun(
+    id: bigint,
+    userId: bigint,
+    reason?: string,
+  ): Promise<IAgentRunView> {
+    const run = await this.approval.cancel(id, userId, reason);
+
+    const aborted = this.graph.abortIfRunning(run.threadId);
+    if (aborted) {
+      // 图循环捕获 abort 后会按 DB 的 CANCELLED 状态发 run.cancelled
+      return run;
+    }
+
+    // 挂起态 / 已结束态：清理 checkpoint（best-effort）并发终态事件
+    await this.graph.discardCheckpoint(run.threadId);
+    await this.events.append(run.id, AGENT_EVENT_TYPE.RUN_CANCELLED, {
+      reason: run.reason ?? undefined,
+      run,
+    });
+
+    return run;
   }
 }
