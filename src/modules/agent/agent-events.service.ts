@@ -151,9 +151,11 @@ export class AgentEventsService implements OnModuleDestroy {
 
   /** INCR 取全局递增序号，并刷新序号 key TTL（MULTI pipeline 一次往返） */
   private async nextSequence(runId: string): Promise<number> {
+    // 开启事务multi，返回一个 transaction 句柄，后续命令会按顺序执行
     const replies = (await this.redis!.multi()
       .incr(this.sequenceKey(runId))
       .expire(this.sequenceKey(runId), STREAM_TTL_SECONDS)
+      // 提交事务，原子性执行所有排队命令exec
       .exec()) as unknown as Array<number | string>;
     return Number(replies[0]);
   }
