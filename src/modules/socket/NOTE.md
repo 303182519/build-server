@@ -133,6 +133,23 @@ socket.emitWithAck('send-to-room', data)
 
 适合需要确认结果的场景（发送消息、写操作）。纯通知类消息不需要 ACK。
 
+### 统一错误通道
+
+服务端错误响应遵循单一事实源 `toWsErrorResponse`（common/filters/ws-exception.filter.ts），
+标准响应体为 `{ status, message, code? }`，status 始终为数字（前端依赖 `status === 401` 判断）。
+
+投递路径二选一、互斥：
+
+| 客户端 emit 方式 | 错误返回路径 | 典型触发 |
+| --- | --- | --- |
+| `emitWithAck` / 带 ack 回调 | ack 回调返回 `{ success: false, status, message, code? }` | 参数校验失败（400）、限流（429）、业务拒绝 |
+| `emit`（不带 ack） | `exception` 事件 `{ status, message, code? }` | 同上 |
+
+约束：
+
+- 客户端若使用 `emitWithAck`，**必须**处理 `success === false` 的返回，不能假设失败时会收到 `exception` 事件。
+- 连接鉴权失败（handleConnection 阶段）没有 ack 上下文，始终走 `exception` 事件，服务端在宽限期（5s）后强制断开；客户端收到 `status === 401` 时应刷新 token 并重连。
+
 ---
 
 ## 类型安全
@@ -174,14 +191,13 @@ const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(...)
 同一用户可能有多个 Socket 连接（多个标签页、多个设备）。
 
 ```typescript
-// SocketService 中用 Map<userId, Set<Socket>> 存储
+// SocketService 中用 Map<userId, Set<Socket>> 存储，
+// 单用户连接数上限 MAX_SOCKETS_PER_USER，超出时踢掉最早建立的连接
 private connectedClients = new Map<string, Set<Socket>>();
 
-// 发送给某个用户的所有连接
-const sockets = this.socketService.getUserSockets(userId);
-for (const socket of sockets) {
-  socket.emit('direct-message', payload);
-}
+// 发送给某个用户的所有连接（Socket 集合不外露，遍历逻辑封装在 Service 内）
+const delivered = this.socketService.sendToUser(userId, 'direct-message', payload);
+// delivered === false 表示该用户当前没有任何活跃连接
 ```
 
 ---
