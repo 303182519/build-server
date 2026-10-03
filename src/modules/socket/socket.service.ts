@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Server, Socket } from 'socket.io';
+import { Namespace, Socket } from 'socket.io';
 import { UserBasePayload } from '../users/users.service';
 import { SYSTEM_ROOM_PREFIX } from './dto';
 import type {
@@ -15,7 +15,7 @@ import type {
 // 私信投递与在线判断已通过 Redis adapter 实现跨实例正确。
 const MAX_SOCKETS_PER_USER = 10;
 
-type TypedServer = Server<ClientToServerEvents, ServerToClientEvents>;
+type TypedNamespace = Namespace<ClientToServerEvents, ServerToClientEvents>;
 
 /** 用户系统房间名：连接鉴权通过后由服务端自动加入，跨实例私信据此路由。 */
 export const userRoom = (userId: string): string =>
@@ -32,13 +32,13 @@ export class SocketService {
    */
   private connectedClients = new Map<string, Set<Socket>>();
 
-  private server: TypedServer | null = null;
+  private server: TypedNamespace | null = null;
 
   /**
-   * Gateway afterInit 时注入 Server。早于任何连接事件（listen 前调用），
+   * Gateway afterInit 时注入 Namespace（/socket）。早于任何连接事件（listen 前调用），
    * 因此连接处理与业务推送发生时该引用必然就绪。
    */
-  attachServer(server: TypedServer): void {
+  attachServer(server: TypedNamespace): void {
     this.server = server;
   }
 

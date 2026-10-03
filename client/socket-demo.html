@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Socket.IO 实时通信示例</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 24px;
+            color: #24292f;
+        }
+        section {
+            border: 1px solid #d0d7de;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 20px;
+        }
+        h1 { font-size: 22px; }
+        h2 { font-size: 16px; margin-top: 0; }
+        .tip { color: #57606a; font-size: 13px; }
+        label { display: inline-block; width: 90px; font-size: 13px; }
+        input, textarea {
+            padding: 4px 8px;
+            margin: 4px 0;
+            border: 1px solid #d0d7de;
+            border-radius: 4px;
+            width: 420px;
+        }
+        textarea { vertical-align: top; height: 60px; }
+        button {
+            padding: 6px 16px;
+            border: none;
+            border-radius: 4px;
+            background: #0969da;
+            color: #fff;
+            cursor: pointer;
+        }
+        button:disabled { background: #8c959f; cursor: not-allowed; }
+        button.secondary { background: #6e7781; }
+        button.danger { background: #cf222e; }
+        button.success { background: #1a7f37; }
+        .badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 10px;
+            font-size: 12px;
+            color: #fff;
+            background: #8c959f;
+        }
+        .badge.connected { background: #1a7f37; }
+        .badge.disconnected { background: #cf222e; }
+        .badge.connecting { background: #bf8700; }
+        #event-log {
+            max-height: 360px;
+            overflow-y: auto;
+            background: #f6f8fa;
+            border-radius: 6px;
+            padding: 10px;
+            font-size: 13px;
+            font-family: ui-monospace, Consolas, monospace;
+        }
+        .log-line {
+            padding: 2px 0;
+            border-bottom: 1px dashed #d0d7de;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .log-line.event { color: #24292f; }
+        .log-line.success { color: #1a7f37; }
+        .log-line.error { color: #cf222e; }
+        .log-line.info { color: #0969da; }
+        .kv { font-size: 13px; margin: 4px 0; }
+        .row { margin: 6px 0; }
+        .inline-input { width: 220px; }
+        .hint-inline { margin-left: 8px; }
+    </style>
+</head>
+<body>
+    <h1>Socket.IO 实时通信示例（namespace: /socket）</h1>
+    <p class="tip">
+        流程：登录（POST /api/auth/login 拿 JWT）→ 携带 <code>auth.token</code> 连接
+        <code>/socket</code> → 体验房间消息 / 点对点私信 / 全局广播。
+        建议同时打开两个标签页（登录不同账号），观察 user-joined、房间消息与私信投递。
+        页面建议通过 <code>http://localhost:3001</code> 访问（在服务端 CORS 白名单内）。
+    </p>
+
+    <section>
+        <h2>1. 服务地址与登录</h2>
+        <div><label>服务地址</label><input id="server-base" class="inline-input" value="http://localhost:3000"></div>
+        <div><label>email</label><input id="email" placeholder="user@example.com"></div>
+        <div><label>password</label><input id="password" type="password"></div>
+        <button id="login-btn">登录</button>
+        <span id="auth-state" class="tip">未登录</span>
+    </section>
+
+    <section>
+        <h2>2. Socket 连接（JWT 握手鉴权）</h2>
+        <button id="connect-btn" class="success" disabled>连接</button>
+        <button id="disconnect-btn" class="danger" disabled>断开</button>
+        <span id="conn-state" class="badge disconnected">未连接</span>
+        <div class="kv">socketId：<span id="socket-id">-</span></div>
+        <div class="kv">我的 userId：<span id="my-user-id">-</span></div>
+        <div class="kv">我的 username：<span id="my-username">-</span></div>
+        <p class="tip">
+            鉴权失败时服务端会下发 <code>exception</code> 事件（401）并断开连接；
+            被服务端主动断开（io server disconnect）时不会自动重连，需重新点击「连接」。
+        </p>
+    </section>
+
+    <section>
+        <h2>3. 房间消息（join-room / send-to-room）</h2>
+        <div class="row">
+            <label>room</label>
+            <input id="room-name" class="inline-input" placeholder="自定义房间名，如 room-1">
+            <button id="join-room-btn" disabled>加入房间</button>
+            <button id="leave-room-btn" class="secondary" disabled>离开房间</button>
+        </div>
+        <div class="row">
+            <label>消息内容</label>
+            <input id="room-message" class="inline-input" placeholder="发送给房间内其他人">
+            <button id="send-room-btn" disabled>发送房间消息</button>
+        </div>
+        <p class="tip">房间消息只投递给房间内的「其他」成员，发送者自己不会收到 room-message。</p>
+    </section>
+
+    <section>
+        <h2>4. 点对点私信（send-to-user）</h2>
+        <div class="row">
+            <label>目标用户</label>
+            <input id="target-user-id" class="inline-input" placeholder="目标 userId（另一标签页连接后展示）">
+        </div>
+        <div class="row">
+            <label>消息内容</label>
+            <input id="direct-message" class="inline-input" placeholder="仅投递到目标用户的全部连接">
+            <button id="send-direct-btn" disabled>发送私信</button>
+        </div>
+        <p class="tip">私信经用户系统房间 system:user:&lt;id&gt; 路由，支持多实例投递；目标不在线时 ack 返回 success:false。</p>
+    </section>
+
+    <section>
+        <h2>5. 全局广播（broadcast）</h2>
+        <div class="row">
+            <label>消息内容</label>
+            <input id="broadcast-message" class="inline-input" placeholder="广播给除自己外的所有连接">
+            <button id="broadcast-btn" disabled>广播</button>
+        </div>
+        <p class="tip">限流：60 秒内最多 5 次；其他事件 60 秒内最多 30 次。</p>
+    </section>
+
+    <section>
+        <h2>事件日志 <button id="clear-log-btn" class="secondary" style="float:right;padding:2px 10px;font-size:12px;">清空</button></h2>
+        <div id="event-log"></div>
+    </section>
+
+    <script src="https://cdn.socket.io/4.8.4/socket.io.min.js"></script>
+    <script src="./js/socket-demo.js"></script>
+</body>
+</html>

@@ -23,7 +23,7 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { createAdapter } from '@socket.io/redis-adapter';
-import { Server } from 'socket.io';
+import { Namespace } from 'socket.io';
 import { UserBasePayload } from '../users/users.service';
 import {
   BroadcastDto,
@@ -60,7 +60,9 @@ export class SocketGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
 {
   @WebSocketServer()
-  server!: Server<ClientToServerEvents, ServerToClientEvents>;
+  // IoAdapter 对声明了 namespace 的网关注入的是 Namespace（io.of('/socket')），
+  // 而非根 Server；房间按命名空间隔离，投递/查询都必须限定在该命名空间内。
+  server!: Namespace<ClientToServerEvents, ServerToClientEvents>;
   private readonly logger = new Logger(SocketGateway.name);
 
   constructor(
@@ -78,7 +80,7 @@ export class SocketGateway
    * ioredis 连接为后台懒重连，此处不等待 Redis 可用：Redis 抖动期
    * 连接建立与本机投递不受影响，跨节点消息在恢复后自动继续。
    */
-  afterInit(server: Server<ClientToServerEvents, ServerToClientEvents>): void {
+  afterInit(server: Namespace<ClientToServerEvents, ServerToClientEvents>): void {
     this.socketService.attachServer(server);
 
     if (!this.redisClients) {
@@ -89,7 +91,10 @@ export class SocketGateway
     }
 
     const { pubClient, subClient, channelKey } = this.redisClients;
-    server.adapter(
+    // Redis adapter 只能安装在根 Server 上（Namespace 无 adapter() 方法）。
+    // Server#adapter() 会为所有已存在的命名空间（含先于此处创建的 /socket）
+    // 重建 adapter，因此调用时点在 .of('/socket') 之后依然生效。
+    server.server.adapter(
       createAdapter(pubClient, subClient, {
         // 隔离 pub/sub channel：多项目 / 多环境共用同一 Redis 时互不串消息
         key: channelKey,

@@ -3,6 +3,7 @@ import { PostsModule } from './posts/posts.module';
 import { BackgroundTasksModule } from './background-tasks/background-tasks.module';
 import { ScheduledTasksModule } from './scheduled-tasks/scheduled-tasks.module';
 import { AgentModule } from './agent/agent.module';
+import { SocketModule } from './socket/socket.module';
 
 export const modules = [
   AuthModule,
@@ -10,4 +11,5 @@ export const modules = [
   BackgroundTasksModule,
   ScheduledTasksModule,
   AgentModule,
+  SocketModule,
 ];

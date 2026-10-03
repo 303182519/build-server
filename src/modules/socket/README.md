@@ -22,20 +22,6 @@ src/modules/socket/
 - `WsJwtGuard`（guards/ws-jwt.guard.ts）：连接鉴权与消息鉴权共用的单一事实源
 - `WsExceptionFilter`（filters/ws-exception.filter.ts）：统一错误信封 `{ status, message, code? }`
 
-## 当前状态（重要）
-
-- **SocketModule 尚未注册**：`src/modules/index.ts` 的 `modules` 数组中还没有 `SocketModule`，Gateway 当前**不会**随应用启动。启用前需手动加入：
-
-```typescript
-// src/modules/index.ts
-import { SocketModule } from './socket/socket.module';
-
-export const modules = [
-  // ...
-  SocketModule,
-];
-```
-
 - 后端依赖已就绪：`@nestjs/websockets`、`@nestjs/platform-socket.io`、`socket.io@^4.8.4`、`@socket.io/redis-adapter@^8.3.0`、`ioredis@^6`
 - 前端仓库（building-web）**尚未安装** `socket.io-client`，接入时需先安装：
 
