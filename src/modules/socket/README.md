@@ -8,8 +8,9 @@
 src/modules/socket/
 ├── socket.module.ts            # 模块定义（导入 UsersModule + JwtModule，导出 SocketService）
 ├── socket.gateway.ts           # Gateway：连接生命周期 + 5 个客户端事件处理器
-├── socket.service.ts           # 连接注册表：Map<userId, Set<Socket>>，sendToUser 封装
-├── dto/index.ts                # 入参校验 DTO（class-validator，白名单过滤）
+├── socket.service.ts           # 本节点连接注册表（Map）+ 用户系统房间投递 / 跨实例在线查询
+├── socket-redis.clients.ts     # Redis adapter 专用 ioredis pub/sub 连接工厂 + 生命周期
+├── dto/index.ts                # 入参校验 DTO（class-validator，白名单过滤、系统房间前缀保护）
 ├── interface/
 │   ├── auth-socket.ts          # AuthSocket：携带脱敏 user 的扩展 Socket 类型
 │   └── socket-event.types.ts   # ClientToServerEvents / ServerToClientEvents / AckResponse
@@ -35,14 +36,14 @@ export const modules = [
 ];
 ```
 
-- 后端依赖已就绪：`@nestjs/websockets`、`@nestjs/platform-socket.io`、`socket.io@^4.8.4`
+- 后端依赖已就绪：`@nestjs/websockets`、`@nestjs/platform-socket.io`、`socket.io@^4.8.4`、`@socket.io/redis-adapter@^8.3.0`、`ioredis@^6`
 - 前端仓库（building-web）**尚未安装** `socket.io-client`，接入时需先安装：
 
 ```bash
 npm install socket.io-client
 ```
 
-- 当前连接注册表为内存 `Map`，仅支持**单实例部署**；多实例需引入 `@socket.io/redis-adapter`（见文末）。
+- 已支持多实例：配置了 Redis（`REDIS_URL` 或 `REDIS_HOST`）即自动启用 Redis adapter；未配置时降级为单实例内存模式并打印告警（见文末）。
 
 ## 后端架构
 
@@ -55,7 +56,7 @@ npm install socket.io-client
 handleConnection()                     ← @UseGuards 对生命周期方法不生效
     │  手动调用 wsJwtGuard.authenticateClient()
     │  提取 token → 验证 JWT → 查询用户 → 挂载 client.user
-    ├─ 成功 → SocketService.handleConnection() 注册连接
+    ├─ 成功 → SocketService.handleConnection() 注册本节点连接 + 加入系统房间 system:user:<id>
     │        → emit('connected') 欢迎，broadcast('user-joined')
     └─ 失败 → emit('exception', { status: 401 ... }, ack)
              5 秒宽限期（等客户端读错误/回 ack）后强制断开
@@ -63,12 +64,12 @@ handleConnection()                     ← @UseGuards 对生命周期方法不�
     ▼
 @SubscribeMessage 消息处理             ← WsJwtGuard + ValidationPipe + WsExceptionFilter
     │  守卫自动重新鉴权（每条消息独立校验）
-    │  DTO 白名单校验（未知属性剔除、超长拒绝）
+    │  DTO 白名单校验（未知属性剔除、超长拒绝、system: 保留前缀拒绝）
     └─ 返回值自动作为 ACK 回调发给客户端
     │
     ▼
 handleDisconnect()
-    │  移除注册；仅当该用户已无任何活跃连接时才广播 user-left
+    │  移除本节点注册（房间由 Socket.IO 自动退出）；跨实例查询无剩余连接后才广播 user-left
 ```
 
 ### 鉴权细节
@@ -95,7 +96,8 @@ Token 提取优先级（`extractWsToken`）：
 | --- | --- |
 | 消息限流（join/leave/send-to-room/send-to-user） | `@Throttle` 60 秒 30 次 |
 | 广播限流（broadcast） | 60 秒 5 次（广播放大 N-1 倍流量） |
-| 单用户并发连接上限 | 10 个，超出踢掉最早连接（emit 429 后断开，客户端自动重连） |
+| 单用户并发连接上限 | 每节点 10 个（集群总上限 = 节点数 × 10），超出踢掉最早连接（emit 429 后断开，客户端自动重连） |
+| 系统房间保留前缀 | `system:`（客户端 join/leave/send-to-room 一律拒绝，防窃听私信、防伪造系统消息） |
 | 房间名长度 | ≤ 100 字符 |
 | 消息长度 | ≤ 2000 字符 |
 
@@ -110,7 +112,7 @@ Token 提取优先级（`extractWsToken`）：
 | `join-room` | `{ room }` | 加入房间，回 `room-joined`，向房间广播 `room-user-joined` |
 | `leave-room` | `{ room }` | 离开房间，回 `room-left`，向房间广播 `room-user-left` |
 | `send-to-room` | `{ room, message }` | 向房间内**其他人**投递 `room-message` |
-| `send-to-user` | `{ targetUserId, message }` | 向目标用户**所有连接**投递 `direct-message`；目标不在线返回 `{ success: false }` |
+| `send-to-user` | `{ targetUserId, message }` | 向目标用户在**所有节点上的全部连接**投递 `direct-message`；集群内无连接返回 `{ success: false }` |
 | `broadcast` | `{ message }` | 向除自己外的所有客户端投递 `broadcast-message` |
 
 AckResponse 结构：
@@ -254,31 +256,46 @@ socket.current?.emit('send-to-room', { room: 'project-42', message: 'hi all' });
 // 任意业务 Service
 constructor(private readonly socketService: SocketService) {}
 
-notifyUser(userId: bigint, payload: unknown): void {
-  const delivered = this.socketService.sendToUser(
+async notifyUser(userId: bigint, payload: unknown): Promise<void> {
+  const delivered = await this.socketService.sendToUser(
     userId.toString(),
     'direct-message',   // 建议扩展专门的业务事件名，并同步补 ServerToClientEvents 类型
     payload,
   );
-  // delivered === false：用户当前不在线，业务上应降级（落库 / 稍后重试），不能当作投递成功
+  // delivered === false：用户在集群内无连接，业务上应降级（落库 / 稍后重试），不能当作投递成功
 }
 ```
 
-可用查询接口：`isConnected(userId)`、`getConnectedUserIds()`。
+可用查询接口：
 
-## 多实例部署（TODO）
+- `isConnected(userId): Promise<boolean>`：集群范围在线判断（本机未命中时经 Redis adapter 查询，约一次 Redis 往返，5s 超时；Redis 故障降级为本机视图）。
+- `getConnectedUserIds(): string[]`：仅返回**本节点**在线用户，非集群全局视图。
 
-当前 `connectedClients` 为进程内存 Map，负载均衡多副本场景下 `send-to-user` 只能命中本实例上的连接。扩展方案：
+## 多实例部署
 
-```bash
-npm install @socket.io/redis-adapter
-```
+配置 Redis（与缓存 / 任务模块共用同一套环境变量：`REDIS_URL`，或 `REDIS_HOST`/`REDIS_PORT`/`REDIS_PASSWORD`/`REDIS_DB`）后，Gateway 在 `afterInit` 自动安装 `@socket.io/redis-adapter`，无需手动开关：
 
-在 Gateway `afterInit` 中接入 Redis adapter；`SocketService` 的集合遍历已收敛在 `sendToUser` 内部，届时仅需改造该层（改用 `server.to('user:<id>')` 房间或 adapter 跨实例投递）。
+- **广播 / 房间消息 / user-joined / user-left**：经 Redis pub/sub 跨节点投递，天然多实例正确。
+- **私信（send-to-user / SocketService.sendToUser）**：连接鉴权通过后自动加入服务端系统房间 `system:user:<userId>`，投递走 `server.to(房间)`，由 adapter 路由到目标连接所在节点。房间前缀在 DTO 层对客户端封禁，外部无法加入他人房间窃听。
+- **在线判断（isConnected）**：本机注册表命中即返回；未命中时通过 adapter 向全部节点查询房间成员。
+- **连接资源**：adapter 使用两条专用 ioredis 连接（pub / sub 分离，sub 进入订阅模式不能复用缓存连接），随 Module 销毁自动 `quit`；channel 前缀为 `${REDIS_KEY_PREFIX}:socket.io`，多环境共用 Redis 互不串消息。
+
+### 故障与降级行为
+
+| 场景 | 行为 |
+| --- | --- |
+| 未配置 Redis | 保持默认内存 adapter，单实例可用，启动日志 WARN 提示多副本不可跨实例投递 |
+| Redis 运行期抖动 / 宕机 | 连接建立、本机投递不受影响；跨节点消息进入 ioredis offline queue，恢复后自动补发，sub 连接自动重订阅；不阻塞启动、不崩进程 |
+| 跨实例在线查询失败 | `isConnected` 降级为本机视图（故障窗口内可能误判他节点用户离线）；`sendToUser` 按在线尽力投递，强可靠需求由业务落库 / ack 兜底 |
+
+### 已知边界
+
+- `MAX_SOCKETS_PER_USER = 10` 是**单节点**上限，集群总上限随节点数放大；如需严格全局上限，需引入 Redis 原子计数 + 远程踢人协议（经系统房间下发指令让旧连接自行断开），当前未实现。
+- `user-left` 在「最后一个连接断开」与「他节点新连接建立」的极端交叠窗口内可能先误发再由对端 `user-joined` 纠正，最终一致。
 
 ## 常见问题
 
 - **为什么连接后还要每条消息鉴权？** `@UseGuards` 对 `handleConnection` 不生效，连接期是手动验证；消息期由 `WsJwtGuard` 在管道中再次校验，两条路径共用 `authenticateClient()` 单一事实源。
 - **`join()` / `leave()` 是异步的**，Socket.IO v4 返回 Promise，必须 `await`。
 - **CORS**：当前 `cors: { origin: '*' }` 仅限开发；生产环境应改为具体域名白名单。
-- **多标签页**：同一用户多连接正常共存，`user-left` 只在最后一个连接断开时广播；连接数超过 10 个会踢掉最旧的标签页。
+- **多标签页**：同一用户多连接正常共存，`user-left` 只在集群内最后一个连接断开时广播；单节点连接数超过 10 个会踢掉最旧的标签页（集群上限按节点数放大，见「已知边界」）。

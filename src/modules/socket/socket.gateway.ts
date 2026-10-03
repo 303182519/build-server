@@ -4,6 +4,7 @@ import {
 } from '@/common/filters/ws-exception.filter';
 import { WsJwtGuard } from '@/common/guards/ws-jwt.guard';
 import {
+  Inject,
   UseFilters,
   UseGuards,
   UsePipes,
@@ -16,10 +17,12 @@ import {
   MessageBody,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
   SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
+import { createAdapter } from '@socket.io/redis-adapter';
 import { Server } from 'socket.io';
 import { UserBasePayload } from '../users/users.service';
 import {
@@ -35,6 +38,10 @@ import {
   ClientToServerEvents,
   ServerToClientEvents,
 } from './interface/socket-event.types';
+import {
+  SOCKET_IO_REDIS_CLIENTS,
+  type SocketIoRedisClients,
+} from './socket-redis.clients';
 import { SocketService } from './socket.service';
 
 // 鉴权失败后的宽限期：期间等待客户端读取 exception 事件 / 回 ack，
@@ -49,7 +56,9 @@ const AUTH_DISCONNECT_GRACE_MS = 5_000;
   // 生产环境请改为具体域名 URL，如 cors: { origin: ['https://example.com'] }
   cors: { origin: '*' },
 })
-export class SocketGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class SocketGateway
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   server!: Server<ClientToServerEvents, ServerToClientEvents>;
   private readonly logger = new Logger(SocketGateway.name);
@@ -57,7 +66,41 @@ export class SocketGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(
     private readonly socketService: SocketService,
     private readonly wsJwtGuard: WsJwtGuard,
+    @Inject(SOCKET_IO_REDIS_CLIENTS)
+    private readonly redisClients: SocketIoRedisClients | null,
   ) {}
+
+  /**
+   * Server 创建后、开始接受连接前执行（NestJS 在 listen 前调用）：
+   * - 配置了 Redis：安装 Redis adapter，广播 / 房间 / 私信跨实例路由；
+   * - 未配置 Redis：保持默认内存 adapter，仅支持单实例，启动告警提示。
+   *
+   * ioredis 连接为后台懒重连，此处不等待 Redis 可用：Redis 抖动期
+   * 连接建立与本机投递不受影响，跨节点消息在恢复后自动继续。
+   */
+  afterInit(server: Server<ClientToServerEvents, ServerToClientEvents>): void {
+    this.socketService.attachServer(server);
+
+    if (!this.redisClients) {
+      this.logger.warn(
+        'Redis 未配置，Socket.IO 运行在单实例内存模式，多副本部署将无法跨实例投递',
+      );
+      return;
+    }
+
+    const { pubClient, subClient, channelKey } = this.redisClients;
+    server.adapter(
+      createAdapter(pubClient, subClient, {
+        // 隔离 pub/sub channel：多项目 / 多环境共用同一 Redis 时互不串消息
+        key: channelKey,
+        // 官方推荐项：响应只回给请求节点，下一大版本将成为默认值
+        publishOnSpecificResponseChannel: true,
+      }),
+    );
+    this.logger.log(
+      `Socket.IO Redis adapter 已启用 (channel prefix: ${channelKey})`,
+    );
+  }
 
   async handleConnection(client: AuthSocket): Promise<void> {
     let user: UserBasePayload;
@@ -89,7 +132,7 @@ export class SocketGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    this.socketService.handleConnection(client, user);
+    await this.socketService.handleConnection(client, user);
     this.logger.log('Socket client connected', {
       category: 'Socket',
       context: {
@@ -111,18 +154,19 @@ export class SocketGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
   }
 
-  handleDisconnect(client: AuthSocket): void {
+  async handleDisconnect(client: AuthSocket): Promise<void> {
     const { user } = client;
-    if (user) {
-      this.socketService.handleDisconnect(client, user);
-      // 多标签页/多设备：仅当该用户已无任何活跃连接时才广播下线，
-      // 否则关闭一个标签页会造成“假离线”（其他连接仍可正常收发消息）。
-      if (!this.socketService.isConnected(user.id.toString())) {
-        this.server.emit('user-left', {
-          userId: user.id.toString(),
-          username: user.username,
-        });
-      }
+    if (!user) return;
+
+    this.socketService.handleDisconnect(client, user);
+    // 多标签页/多设备/多实例：仅当该用户在集群内已无任何活跃连接时才广播下线，
+    // 否则关闭一个标签页（或连接漂移到其他节点）会造成“假离线”。
+    // isConnected 未命中本机时经 Redis adapter 查询其他节点；查询失败降级本机视图。
+    if (!(await this.socketService.isConnected(user.id.toString()))) {
+      this.server.emit('user-left', {
+        userId: user.id.toString(),
+        username: user.username,
+      });
     }
   }
 
@@ -206,10 +250,10 @@ export class SocketGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @Throttle({ default: { ttl: 60_000, limit: 30 } })
   @SubscribeMessage('send-to-user')
-  handleSendToUser(
+  async handleSendToUser(
     @ConnectedSocket() client: AuthSocket,
     @MessageBody() data: SendToUserDto,
-  ): AckResponse {
+  ): Promise<AckResponse> {
     const { user } = client;
     if (!user) return { success: false, message: 'Not authenticated' };
 
@@ -221,8 +265,8 @@ export class SocketGateway implements OnGatewayConnection, OnGatewayDisconnect {
     };
 
     // Socket 集合的持有与遍历下沉到 Service，Gateway 不接触内部引用；
-    // 多实例切换 Redis adapter 时仅需改造 SocketService。
-    const delivered = this.socketService.sendToUser(
+    // Service 经用户系统房间 + Redis adapter 完成跨实例投递。
+    const delivered = await this.socketService.sendToUser(
       data.targetUserId,
       'direct-message',
       payload,

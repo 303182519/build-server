@@ -191,34 +191,53 @@ const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(...)
 同一用户可能有多个 Socket 连接（多个标签页、多个设备）。
 
 ```typescript
-// SocketService 中用 Map<userId, Set<Socket>> 存储，
-// 单用户连接数上限 MAX_SOCKETS_PER_USER，超出时踢掉最早建立的连接
+// SocketService 中用 Map<userId, Set<Socket>> 存储【本节点】连接，
+// 单节点单用户连接数上限 MAX_SOCKETS_PER_USER，超出时踢掉最早建立的连接。
+// 集群范围的房间成员关系由 Redis adapter 维护，不在此 Map 中。
 private connectedClients = new Map<string, Set<Socket>>();
 
-// 发送给某个用户的所有连接（Socket 集合不外露，遍历逻辑封装在 Service 内）
-const delivered = this.socketService.sendToUser(userId, 'direct-message', payload);
-// delivered === false 表示该用户当前没有任何活跃连接
+// 发送给某个用户的所有连接（跨所有节点）：
+// 连接时自动加入服务端系统房间 system:user:<userId>，经 adapter 路由
+const delivered = await socketService.sendToUser(userId, 'direct-message', payload);
+// delivered === false 表示集群内没有该用户的任何活跃连接
 ```
 
 ---
 
 ## 多实例部署
 
-当前 `connectedClients` 存在内存中，仅支持单实例。
-多实例需要使用 Redis Adapter：
-
-```bash
-npm install @socket.io/redis-adapter
-```
+通过 `@socket.io/redis-adapter` 支持多副本水平扩展，配置 Redis 后在 Gateway
+`afterInit` 中自动接入（未配置则降级单实例内存模式）：
 
 ```typescript
 import { createAdapter } from '@socket.io/redis-adapter';
+import { Redis } from 'ioredis';
 
-const io = new Server(server);
-const pubClient = createClient({ url: 'redis://localhost:6379' });
+// pub / sub 必须是两条独立连接：sub 进入订阅模式后不能执行普通命令
+const pubClient = new Redis(redisUrl, { retryStrategy: (n) => Math.min(n * 200, 3000) });
 const subClient = pubClient.duplicate();
-io.adapter(createAdapter(pubClient, subClient));
+// 两个连接都必须挂 error handler，否则 EventEmitter 默认 throw 会拖崩进程
+
+server.adapter(
+  createAdapter(pubClient, subClient, {
+    key: `${keyPrefix}:socket.io`,            // pub/sub channel 隔离前缀
+    publishOnSpecificResponseChannel: true,   // 官方推荐，下一大版本默认值
+  }),
+);
 ```
+
+要点：
+
+1. **广播 / 房间 / 上下线通知**：adapter 通过 Redis pub/sub 跨节点转发，自动正确。
+2. **点对点私信**：不能遍历本节点 Map，改为用户房间 `server.to('system:user:<id>')`；
+   房间名使用服务端保留前缀，join-room / send-to-room 入参校验拒绝该前缀，
+   防止客户端自行加入他人房间窃听、或向系统房间伪造消息。
+3. **在线判断**：`server.in(room).allSockets()` 经 adapter 查询全部节点（5s 超时）；
+   本机注册表命中时可直接返回 true 作为快速路径；查询失败降级本机视图。
+4. **故障设计**：ioredis 保留 offline queue + 自动重连，Redis 抖动期不阻塞连接建立、
+   不产生 unhandledRejection（adapter 内部 publish 不 catch）；恢复后自动重订阅。
+5. **边界**：每用户连接数上限是单节点语义；严格全局上限需 Redis 原子计数 +
+   远程踢人协议（经系统房间通知旧连接自行 disconnect）。
 
 ---
 

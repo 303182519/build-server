@@ -1,19 +1,48 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Socket } from 'socket.io';
+import { Server, Socket } from 'socket.io';
 import { UserBasePayload } from '../users/users.service';
+import { SYSTEM_ROOM_PREFIX } from './dto';
+import type {
+  ClientToServerEvents,
+  ServerToClientEvents,
+} from './interface/socket-event.types';
 
-// 单用户最大并发连接数（多标签页 / 多设备）。超出时踢掉最早建立的连接，
+// 单实例单用户最大并发连接数（多标签页 / 多设备）。超出时踢掉最早建立的连接，
 // 防止单用户无限开连接造成内存占用与 user-joined / user-left 广播放大。
+//
+// 多实例语义：该上限为「单节点」上限（集群总上限 = 节点数 × MAX_SOCKETS_PER_USER）。
+// 跨节点的全局上限需要 Redis 原子计数 + 远程踢人协议，本期不引入；
+// 私信投递与在线判断已通过 Redis adapter 实现跨实例正确。
 const MAX_SOCKETS_PER_USER = 10;
+
+type TypedServer = Server<ClientToServerEvents, ServerToClientEvents>;
+
+/** 用户系统房间名：连接鉴权通过后由服务端自动加入，跨实例私信据此路由。 */
+export const userRoom = (userId: string): string =>
+  `${SYSTEM_ROOM_PREFIX}user:${userId}`;
 
 @Injectable()
 export class SocketService {
   private readonly logger = new Logger(SocketService.name);
 
-  // TODO: 当前使用内存 Map，仅适用于单实例部署。多实例需使用 @socket.io/redis-adapter
+  /**
+   * 本节点连接注册表：仅记录本进程上的连接。
+   * 用途：单节点连接数上限、跨实例查询前的本机快速路径、本机日志。
+   * 集群范围内的房间成员关系由 Socket.IO adapter（Redis）维护，不存于此。
+   */
   private connectedClients = new Map<string, Set<Socket>>();
 
-  handleConnection(client: Socket, user: UserBasePayload): void {
+  private server: TypedServer | null = null;
+
+  /**
+   * Gateway afterInit 时注入 Server。早于任何连接事件（listen 前调用），
+   * 因此连接处理与业务推送发生时该引用必然就绪。
+   */
+  attachServer(server: TypedServer): void {
+    this.server = server;
+  }
+
+  async handleConnection(client: Socket, user: UserBasePayload): Promise<void> {
     const userId = user.id.toString();
     let sockets = this.connectedClients.get(userId);
     if (!sockets) {
@@ -31,6 +60,11 @@ export class SocketService {
     }
 
     sockets.add(client);
+
+    // 加入用户系统房间：RedisAdapter 房间成员按节点本地维护，加入仅写本机状态，
+    // 不依赖 Redis 可用性；断开时 Socket.IO 自动退出房间，无需手动 leave。
+    await client.join(userRoom(userId));
+
     this.logger.log('Socket client connected', {
       category: 'Socket',
       context: {
@@ -80,27 +114,82 @@ export class SocketService {
     });
   }
 
+  /**
+   * 当前在本节点上有连接的用户 ID（本机视图，非集群全局）。
+   * 全局在线列表需走 adapter 房间查询，当前无此业务需求，不做扩展。
+   */
   getConnectedUserIds(): string[] {
     return Array.from(this.connectedClients.keys());
   }
 
-  isConnected(userId: string): boolean {
-    return this.connectedClients.has(userId);
+  /**
+   * 判断用户在集群内是否仍有活跃连接。
+   *
+   * 本机注册表命中可直接返回 true（零开销）；未命中时通过 Redis adapter
+   * 向所有节点查询用户房间成员（allSockets 会等待各节点响应，5s 超时）。
+   * Redis 不可用导致查询失败时降级为本机视图并记录告警——与单实例期行为一致，
+   * 代价是 Redis 故障窗口内可能漏判其他节点上的连接。
+   */
+  async isConnected(userId: string): Promise<boolean> {
+    if (this.connectedClients.has(userId)) {
+      return true;
+    }
+    if (!this.server) {
+      return false;
+    }
+    try {
+      const sockets = await this.server.in(userRoom(userId)).allSockets();
+      return sockets.size > 0;
+    } catch (error) {
+      this.logger.warn(
+        `跨实例在线状态查询失败，降级为本机视图: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return this.connectedClients.has(userId);
+    }
   }
 
   /**
-   * 向用户的所有活跃连接投递事件。
-   * 返回是否至少投递给一个连接。封装 Socket 集合的持有与遍历，
-   * 调用方不接触内部引用；多实例切换 Redis adapter 时仅需改造此处。
+   * 向用户在所有节点上的全部活跃连接投递事件（经 Redis adapter 路由）。
+   *
+   * 返回是否至少存在一个接收连接，供调用方决定离线降级（落库 / 稍后重试）：
+   * - 本机有连接：必在线，直接投递；
+   * - 本机无连接：查询用户房间的集群成员，为空则返回 false；
+   * - 查询失败（Redis 故障）：无法确认远程在线状态，仍尽力投递（adapter
+   *   无论 publish 成败都会执行本机广播）并按在线处理，避免本可送达的消息
+   *   被误判丢弃；强可靠需求应由业务侧落库 / ack 兜底。
    */
-  sendToUser(userId: string, event: string, payload: unknown): boolean {
-    const sockets = this.connectedClients.get(userId);
-    if (!sockets || sockets.size === 0) {
+  async sendToUser(
+    userId: string,
+    event: string,
+    payload: unknown,
+  ): Promise<boolean> {
+    if (!this.server) {
       return false;
     }
-    for (const socket of sockets) {
-      socket.emit(event, payload);
+
+    const room = userRoom(userId);
+    if (!this.connectedClients.has(userId)) {
+      try {
+        const remoteSockets = await this.server.in(room).allSockets();
+        if (remoteSockets.size === 0) {
+          return false;
+        }
+      } catch (error) {
+        this.logger.warn(
+          `跨实例房间查询失败，按在线尽力投递: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
     }
+
+    // event / payload 为业务可扩展的动态事件，单点窄化到强类型 Server；
+    // 房间名受 SYSTEM_ROOM_PREFIX 入参校验保护，外部连接无法进入该房间。
+    this.server
+      .to(room)
+      .emit(event as keyof ServerToClientEvents, payload as never);
     return true;
   }
 }
