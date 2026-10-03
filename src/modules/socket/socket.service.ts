@@ -126,7 +126,7 @@ export class SocketService {
    * 判断用户在集群内是否仍有活跃连接。
    *
    * 本机注册表命中可直接返回 true（零开销）；未命中时通过 Redis adapter
-   * 向所有节点查询用户房间成员（allSockets 会等待各节点响应，5s 超时）。
+   * 向所有节点查询用户房间成员（fetchSockets 会等待各节点响应，5s 超时）。
    * Redis 不可用导致查询失败时降级为本机视图并记录告警——与单实例期行为一致，
    * 代价是 Redis 故障窗口内可能漏判其他节点上的连接。
    */
@@ -138,8 +138,10 @@ export class SocketService {
       return false;
     }
     try {
-      const sockets = await this.server.in(userRoom(userId)).allSockets();
-      return sockets.size > 0;
+      // allSockets() 在 socket.io v4 已标记 @deprecated，官方替代为 fetchSockets()，
+      // 同样经 adapter 跨节点查询（返回 RemoteSocket[]，此处只取长度判空）。
+      const sockets = await this.server.in(userRoom(userId)).fetchSockets();
+      return sockets.length > 0;
     } catch (error) {
       this.logger.warn(
         `跨实例在线状态查询失败，降级为本机视图: ${
@@ -172,8 +174,8 @@ export class SocketService {
     const room = userRoom(userId);
     if (!this.connectedClients.has(userId)) {
       try {
-        const remoteSockets = await this.server.in(room).allSockets();
-        if (remoteSockets.size === 0) {
+        const remoteSockets = await this.server.in(room).fetchSockets();
+        if (remoteSockets.length === 0) {
           return false;
         }
       } catch (error) {

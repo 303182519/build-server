@@ -232,8 +232,9 @@ server.adapter(
 2. **点对点私信**：不能遍历本节点 Map，改为用户房间 `server.to('system:user:<id>')`；
    房间名使用服务端保留前缀，join-room / send-to-room 入参校验拒绝该前缀，
    防止客户端自行加入他人房间窃听、或向系统房间伪造消息。
-3. **在线判断**：`server.in(room).allSockets()` 经 adapter 查询全部节点（5s 超时）；
-   本机注册表命中时可直接返回 true 作为快速路径；查询失败降级本机视图。
+3. **在线判断**：`server.in(room).fetchSockets()` 经 adapter 查询全部节点（5s 超时；
+   `allSockets()` 在 v4 已弃用，下一大版本移除）；本机注册表命中时可直接返回
+   true 作为快速路径；查询失败降级本机视图。
 4. **故障设计**：ioredis 保留 offline queue + 自动重连，Redis 抖动期不阻塞连接建立、
    不产生 unhandledRejection（adapter 内部 publish 不 catch）；恢复后自动重订阅。
 5. **边界**：每用户连接数上限是单节点语义；严格全局上限需 Redis 原子计数 +
