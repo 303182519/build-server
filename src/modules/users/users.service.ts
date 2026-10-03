@@ -36,7 +36,9 @@ const userBaseSelect = {
   updatedAt: true,
 } satisfies Prisma.UserSelect;
 
-type UserBasePayload = Prisma.UserGetPayload<{
+// 导出供鉴权链路（JwtAuthStrategy / WsJwtGuard / AuthSocket）复用，
+// 保证 socket.user 与 HTTP req.user 的脱敏形状一致（不含 password / deletedAt）。
+export type UserBasePayload = Prisma.UserGetPayload<{
   select: typeof userBaseSelect;
 }>;
 
