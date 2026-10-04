@@ -64,15 +64,6 @@ export class SocketService {
     // 加入用户系统房间：RedisAdapter 房间成员按节点本地维护，加入仅写本机状态，
     // 不依赖 Redis 可用性；断开时 Socket.IO 自动退出房间，无需手动 leave。
     await client.join(userRoom(userId));
-
-    this.logger.log('Socket client connected', {
-      category: 'Socket',
-      context: {
-        socketId: client.id,
-        userId,
-        username: user.username,
-      },
-    });
   }
 
   /**

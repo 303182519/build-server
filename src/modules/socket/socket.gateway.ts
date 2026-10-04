@@ -137,7 +137,28 @@ export class SocketGateway
       return;
     }
 
-    await this.socketService.handleConnection(client, user);
+    // 鉴权通过后的初始化（注册本节点连接表 / join 系统房间）失败时，
+    // 连接处于"半初始化"状态：客户端等不到 connected，服务端注册表可能不完整。
+    // 必须兜底断开，让客户端走 socket.io 自动重连，避免僵尸连接悬挂。
+    try {
+      await this.socketService.handleConnection(client, user);
+    } catch (error) {
+      this.logger.error('Socket connection initialization failed', {
+        category: 'Socket',
+        context: {
+          socketId: client.id,
+          userId: user.id.toString(),
+        },
+        ...(error instanceof Error ? { err: error } : {}),
+      });
+      client.emit('exception', {
+        status: 500,
+        message: '连接初始化失败，请重连',
+      });
+      client.disconnect(true);
+      return;
+    }
+
     this.logger.log('Socket client connected', {
       category: 'Socket',
       context: {
