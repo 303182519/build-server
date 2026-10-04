@@ -48,4 +48,8 @@ export const CacheKeys = {
 
   // 热门文章排行榜 ZSET：member=post id，score=浏览数。全局唯一，无参数。
   TRENDING_POSTS: 'hot:posts',
+
+  // WS 鉴权：用户存在性（含软删检测）缓存，TTL 60s。
+  // WsJwtGuard 读、UsersService.remove 软删时主动 DEL，避免 users 模块反向依赖 guards。
+  WS_AUTH_USER: (id: string | bigint) => `ws:auth:user:${id}`,
 } as const;

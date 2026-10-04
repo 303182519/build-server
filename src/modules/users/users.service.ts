@@ -5,6 +5,8 @@ import {
   ErrorExceptionCode,
 } from '@/common/exceptions/error.exception';
 import { PrismaService } from '@/shared/database/prisma/prisma.service';
+import { CacheService } from '@/shared/caching/cache.service';
+import { CacheKeys } from '@/shared/caching/cache.constants';
 import { generateSnowflakeId } from '@/shared/utils/snowflake';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -120,6 +122,7 @@ export class UsersService {
     private readonly rolesService: RolesService,
     private readonly permissionsService: PermissionsService,
     private readonly configService: ConfigService,
+    private readonly cacheService: CacheService,
   ) {
     this.defaultAdminUsername = this.configService.getOrThrow<string>(
       'DEFAULT_ADMIN_USERNAME',
@@ -756,6 +759,16 @@ export class UsersService {
         this.logger.log(`User removed: id=${id}, operator=${operator.id}`);
       } catch {
         this.logger.log(`User removed: id=${id}`);
+      }
+
+      // 主动失效 WS 鉴权用户缓存：否则被软删用户最长 60s 后才被 WS 拒绝。
+      // 放在事务内最后一步：事务失败回滚时缓存未失效，无副作用；
+      // 事务成功则确保下一条 WS 消息查库命中 USER_NOT_FOUND。
+      // del 失败不影响软删主流程（Redis 抖动时由 60s TTL 兜底）。
+      try {
+        await this.cacheService.del(CacheKeys.WS_AUTH_USER(id.toString()));
+      } catch {
+        // 缓存失效失败由 TTL 兜底，不阻断软删主流程
       }
 
       return { success: true } as const;
