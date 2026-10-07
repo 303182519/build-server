@@ -80,7 +80,9 @@ export class SocketGateway
    * ioredis 连接为后台懒重连，此处不等待 Redis 可用：Redis 抖动期
    * 连接建立与本机投递不受影响，跨节点消息在恢复后自动继续。
    */
-  afterInit(server: Namespace<ClientToServerEvents, ServerToClientEvents>): void {
+  afterInit(
+    server: Namespace<ClientToServerEvents, ServerToClientEvents>,
+  ): void {
     this.socketService.attachServer(server);
 
     if (!this.redisClients) {
