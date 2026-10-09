@@ -1,36 +1,47 @@
 #!/bin/bash
+set -euo pipefail
 
-set -e
-HOST=$1
-VERSION=$2
+HOST="${1:?参数错误: 缺少 HOST}"
+VERSION="${2:?参数错误: 缺少 VERSION}"
 
 source ./config.sh
 
+if [ -z "${ACR_USER:-}" ] || [ -z "${ACR_PASS:-}" ]; then
+    echo "错误: ACR_USER / ACR_PASS 未配置" >&2
+    exit 1
+fi
+
 echo "部署服务器:$HOST"
 
-ssh ${HOST} <<EOF
+ssh ${SSH_OPTS} "${HOST}" <<EOF
+set -euo pipefail
 
 echo "登录ACR"
-docker login \\
-registry.cn-hangzhou.aliyuncs.com
-echo "拉取镜像"
+echo "${ACR_PASS}" | docker login "${ACR_REGISTRY}" -u "${ACR_USER}" --password-stdin
 
-docker pull \\
-${IMAGE}:${VERSION}
+echo "拉取镜像"
+docker pull "${IMAGE}:${VERSION}"
 
 echo "停止旧容器"
-
-docker stop ${CONTAINER_NAME} || true
-docker rm ${CONTAINER_NAME} || true
+docker stop -t "${DOCKER_STOP_TIMEOUT}" "${CONTAINER_NAME}" || true
+docker rm "${CONTAINER_NAME}" || true
 
 echo "启动新版本"
-
 docker run -d \\
---name ${CONTAINER_NAME} \\
--p ${PORT}:3000 \\
--e APP_VERSION=${VERSION} \\
---restart always \\
-${IMAGE}:${VERSION}
+  --name "${CONTAINER_NAME}" \\
+  -p "${PORT}:3000" \\
+  -e APP_VERSION="${VERSION}" \\
+  --stop-timeout "${DOCKER_STOP_TIMEOUT}" \\
+  --restart always \\
+  "${IMAGE}:${VERSION}"
+
+echo "校验容器运行状态"
+sleep 2
+if ! docker ps --filter "name=${CONTAINER_NAME}" --filter "status=running" --format '{{.Names}}' | grep -qx "${CONTAINER_NAME}"; then
+    echo "错误: 容器未正常运行" >&2
+    docker logs --tail 50 "${CONTAINER_NAME}" || true
+    exit 1
+fi
 
 echo "部署完成"
 EOF
