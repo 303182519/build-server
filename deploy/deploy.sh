@@ -1,42 +1,21 @@
 #!/bin/bash
 
-set -o pipefail
+set -euo pipefail
 
-
-#######################################
-# 参数
-#######################################
-
-VERSION=$1
-OLD_VERSION=$2
-
-if [ -z "$VERSION" ] || [ -z "$OLD_VERSION" ]
-then
-    echo "
-    参数错误
-    使用:
-    ./deploy.sh 新版本 旧版本
-    示例:
-    ./deploy.sh 102 101
-    "
-    exit 1
-fi
-
-#######################################
-# 加载配置
-#######################################
+VERSION="${1:?参数错误: 缺少新版本}"
+OLD_VERSION="${2:?参数错误: 缺少旧版本}"
 
 source ./config.sh
 
-#######################################
-# 日志
-#######################################
+for VAR in ECS01_ID ECS01_HOST ECS02_ID ECS02_HOST LOAD_BALANCER_ID REGION_ID IMAGE ACR_REGISTRY ACR_USER ACR_PASS CONTAINER_NAME PORT; do
+    if [ -z "${!VAR:-}" ]; then
+        echo "错误: ${VAR} 未配置" >&2
+        exit 1
+    fi
+done
 
 log(){
-    echo "
-    [$(date '+%Y-%m-%d %H:%M:%S')]
-    $1
-    "
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
 #######################################
@@ -62,13 +41,9 @@ deploy_server(){
 
     log "1. 移除SLB流量"
 
-    ./slb-remove.sh \
-    $SERVER_ID
-
-    if [ $? -ne 0 ]
-    then
-			log "SLB摘流失败"
-			exit 1
+    if ! ./slb-remove.sh "$SERVER_ID"; then
+        log "SLB摘流失败"
+        return 1
     fi
 
     ################################
@@ -76,22 +51,14 @@ deploy_server(){
     ################################
 
     log "2. 更新Docker"
-
-    ./ssh-deploy.sh \
-    $SERVER_HOST \
-    $VERSION
-
-    if [ $? -ne 0 ]
-    then
-      log "Docker部署失败"
-
-    rollback_server \
-    $SERVER_HOST
-
-    ./slb-add.sh \
-    $SERVER_ID
-
-    exit 1
+    if ! ./ssh-deploy.sh "$SERVER_HOST" "$VERSION"; then
+        log "Docker部署失败,执行回滚"
+        if rollback_server "$SERVER_HOST"; then
+            ./slb-add.sh "$SERVER_ID" || log "警告:恢复SLB失败"
+        else
+            log "!!! 回滚失败 !!! 服务器:$SERVER_HOST 保持摘流,需人工介入"
+        fi
+        return 1
     fi
 
     ################################
@@ -99,48 +66,23 @@ deploy_server(){
     ################################
 
     log "3. 健康检查"
-
-    ./health-check.sh \
-    $SERVER_HOST
-
-
-    if [ $? -ne 0 ]
-    then
-        log "健康检查失败"
-
-    rollback_server \
-    $SERVER_HOST
-
-    ./slb-add.sh \
-    $SERVER_ID
-
-    exit 1
+    if ! ./health-check.sh "$SERVER_HOST"; then
+        log "健康检查失败,执行回滚"
+        if rollback_server "$SERVER_HOST"; then
+            ./slb-add.sh "$SERVER_ID" || log "警告:恢复SLB失败"
+        else
+            log "!!! 回滚失败 !!! 服务器:$SERVER_HOST 保持摘流,需人工介入"
+        fi
+        return 1
     fi
-
-
-
-    ################################
-    # 4. 恢复SLB
-    ################################
 
     log "4. 恢复SLB流量"
-
-    ./slb-add.sh \
-    $SERVER_ID
-
-    if [ $? -ne 0 ]
-    then
-        log "恢复SLB失败"    
-    exit 1
+    if ! ./slb-add.sh "$SERVER_ID"; then
+        log "恢复SLB失败"
+        return 1
     fi
 
-
-    log "
-    发布成功:
-    $SERVER_HOST
-    版本:
-    $VERSION
-    "
+    log "发布成功 服务器:$SERVER_HOST 版本:$VERSION"
 }
 
 
@@ -151,31 +93,16 @@ deploy_server(){
 #######################################
 
 rollback_server(){
+    SERVER_HOST="$1"
+    log "开始回滚 服务器:$SERVER_HOST 恢复版本:$OLD_VERSION"
 
-
-    SERVER_HOST=$1
-
-    log "
-        开始回滚:    
-        $SERVER_HOST
-        恢复版本:
-        $OLD_VERSION
-    "
-
-    ./rollback.sh \
-    $SERVER_HOST \
-    $OLD_VERSION
-
-    if [ $? -ne 0 ]
-    then
-        log "
-        !!! 回滚失败 !!!
-        需要人工介入
-        "
-        exit 1
+    if ! ./rollback.sh "$SERVER_HOST" "$OLD_VERSION"; then
+        log "!!! 回滚失败 !!! 需要人工介入 服务器:$SERVER_HOST"
+        return 1
     fi
 
     log "回滚完成"
+    return 0
 }
 
 
@@ -184,42 +111,18 @@ rollback_server(){
 # 主流程
 #######################################
 
-log "
-=================================
-开始发布
-新版本:
-$VERSION
-旧版本:
-$OLD_VERSION
-=================================
-"
+trap 'log "发布被中断,请检查服务器状态与SLB流量"' INT TERM
 
+log "================================= 开始发布 新版本:$VERSION 旧版本:$OLD_VERSION ================================="
 
-#######################################
-# 发布 ECS01
-#######################################
+if ! deploy_server "$ECS01_ID" "$ECS01_HOST"; then
+    log "ECS01发布失败,停止后续发布"
+    exit 1
+fi
 
-deploy_server \
+if ! deploy_server "$ECS02_ID" "$ECS02_HOST"; then
+    log "ECS02发布失败,停止"
+    exit 1
+fi
 
-$ECS01_ID \
-
-$ECS01_HOST
-
-#######################################
-# 发布 ECS02
-#######################################
-
-deploy_server \
-
-$ECS02_ID \
-
-$ECS02_HOST
-
-log "
-
-=================================
-全部发布完成
-版本:
-$VERSION
-=================================
-"
+log "================================= 全部发布完成 版本:$VERSION ================================="
