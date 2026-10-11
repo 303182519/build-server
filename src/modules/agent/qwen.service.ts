@@ -65,6 +65,9 @@ export class QwenService {
    * 注入的 StreamMessagesHandler 回调，model.invoke 内部仍以流式执行，token 分片
    * 会被图运行循环拦截并转成 message.delta 事件；signal 也随 config 透传，
    * 支持 run 取消时中断 LLM 请求。
+   *
+   * LLM 调用的 input/output/token 用量由 @langfuse/langchain 的 CallbackHandler
+   * 自动捕获，无需在此手动记录。
    */
   async generateDraft(
     prompt: string,

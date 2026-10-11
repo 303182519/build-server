@@ -6,6 +6,7 @@ import { AgentGraphService } from './agent-graph.service';
 import { AgentEventsService } from './agent-events.service';
 import { ApprovalService } from './approval.service';
 import { QwenService } from './qwen.service';
+import { LangfuseService } from './langfuse.service';
 
 @Module({
   imports: [PostsModule], // 需要 PostsService 执行"创建文章草稿"副作用
@@ -16,6 +17,7 @@ import { QwenService } from './qwen.service';
     AgentEventsService,
     ApprovalService,
     QwenService,
+    LangfuseService,
   ],
 })
 export class AgentModule {}

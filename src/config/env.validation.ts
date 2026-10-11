@@ -79,6 +79,11 @@ export const validationSchema = Joi.object({
   QWEN_API_URL: Joi.string().uri().allow(''),
   QWEN_MODEL: Joi.string().default('qwen-plus'),
 
+  // Langfuse 全链路观测；不配置则静默禁用，不影响启动
+  LANGFUSE_SECRET_KEY: Joi.string().allow(''),
+  LANGFUSE_PUBLIC_KEY: Joi.string().allow(''),
+  LANGFUSE_BASE_URL: Joi.string().uri().allow(''),
+
   // Pino Logger (日志)
   LOG_LEVEL: Joi.string()
     .valid('trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent')

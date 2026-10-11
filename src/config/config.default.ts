@@ -97,6 +97,12 @@ export const defaultConfig = registerAs('default', (): AppConfig => ({
     baseUrl: process.env.QWEN_API_URL,
     model: process.env.QWEN_MODEL || 'qwen-plus',
   },
+  langfuse: {
+    // 为空则禁用全链路观测（静默降级，不影响启动）
+    secretKey: process.env.LANGFUSE_SECRET_KEY,
+    publicKey: process.env.LANGFUSE_PUBLIC_KEY,
+    baseUrl: process.env.LANGFUSE_BASE_URL || 'https://cloud.langfuse.com',
+  },
   logger: {
     level: (process.env.LOG_LEVEL as LoggerConfig['level']) || 'info',
     includeContext: process.env.LOG_INCLUDE_CONTEXT !== 'false',

@@ -21,6 +21,7 @@ import { PostsService } from '../posts/posts.service';
 import { ApprovalService } from './approval.service';
 import { AgentEventsService } from './agent-events.service';
 import { QwenService } from './qwen.service';
+import { LangfuseService } from './langfuse.service';
 import {
   AGENT_ACTION_TYPE,
   AGENT_EVENT_TYPE,
@@ -83,6 +84,7 @@ export class AgentGraphService implements OnModuleDestroy {
     private readonly approval: ApprovalService,
     private readonly events: AgentEventsService,
     private readonly posts: PostsService,
+    private readonly langfuse: LangfuseService,
   ) {}
 
   /**
@@ -205,13 +207,36 @@ export class AgentGraphService implements OnModuleDestroy {
       prompt: input.prompt,
     });
 
+    // Langfuse：在根 trace 上下文中执行图；CallbackHandler 自动捕获 LLM/工具调用
+    const handler = this.langfuse.createHandler({
+      userId: input.userId,
+      metadata: {
+        runId: input.runId,
+        actionType: AGENT_ACTION_TYPE.CREATE_POST_DRAFT,
+      },
+    });
+
     try {
-      const stream = await graph.stream(input, {
-        ...config,
-        streamMode: 'messages',
-      });
-      await this.consumeMessageStream(stream, input.runId);
-      await this.afterStream(graph, input.threadId, input.runId, config);
+      await this.langfuse.startTrace(
+        input.threadId,
+        {
+          input: input.prompt,
+          userId: input.userId,
+          metadata: {
+            runId: input.runId,
+            actionType: AGENT_ACTION_TYPE.CREATE_POST_DRAFT,
+          },
+        },
+        async () => {
+          const stream = await graph.stream(input, {
+            ...config,
+            streamMode: 'messages',
+            callbacks: [handler],
+          });
+          await this.consumeMessageStream(stream, input.runId);
+          await this.afterStream(graph, input.threadId, input.runId, config);
+        },
+      );
     } catch (err) {
       await this.handleStreamError(
         err,
@@ -243,13 +268,21 @@ export class AgentGraphService implements OnModuleDestroy {
       signal: abort.signal,
     };
 
+    // Langfuse：续接 startRun 创建的同一 trace（跨审批请求）
+    const handler = this.langfuse.createHandler({
+      userId: run.userId,
+      metadata: { runId: run.id, approved, reason },
+    });
+
     try {
-      const stream = await graph.stream(
-        new Command({ resume: { approved, reason } }),
-        { ...config, streamMode: 'messages' },
-      );
-      await this.consumeMessageStream(stream, run.id);
-      await this.afterStream(graph, threadId, run.id, config);
+      await this.langfuse.withTraceContext(threadId, async () => {
+        const stream = await graph.stream(
+          new Command({ resume: { approved, reason } }),
+          { ...config, streamMode: 'messages', callbacks: [handler] },
+        );
+        await this.consumeMessageStream(stream, run.id);
+        await this.afterStream(graph, threadId, run.id, config);
+      });
     } catch (err) {
       await this.handleStreamError(err, graph, threadId, run.id, config);
       throw new ErrorException(ErrorExceptionCode.GRAPH_INTERRUPT_FAILED);
@@ -272,6 +305,9 @@ export class AgentGraphService implements OnModuleDestroy {
 
   /** 挂起态取消：尽力删除 checkpoint，避免残留挂起线程（TTL 也会兜底回收） */
   async discardCheckpoint(threadId: string): Promise<void> {
+    // 清理 trace 上下文缓存
+    this.langfuse.releaseTrace(threadId);
+
     try {
       if (!this.checkpointer) {
         await this.ensureGraph();
@@ -394,6 +430,7 @@ export class AgentGraphService implements OnModuleDestroy {
         reason: run.reason ?? undefined,
         run,
       });
+      this.langfuse.releaseTrace(threadId);
       return;
     }
 
@@ -418,9 +455,11 @@ export class AgentGraphService implements OnModuleDestroy {
         reason: run.reason ?? undefined,
         run,
       });
+      this.langfuse.releaseTrace(threadId);
       return;
     }
     await this.emit(runId, AGENT_EVENT_TYPE.RUN_COMPLETED, { run });
+    this.langfuse.releaseTrace(threadId);
   }
 
   // ── 节点实现 ─────────────────────────────────────────────────────────────
@@ -474,16 +513,24 @@ export class AgentGraphService implements OnModuleDestroy {
     });
 
     try {
-      // 实际副作用：创建文章草稿（author=发起人，status=draft）
-      const post = await this.posts.create(
-        {
-          title: state.draft.title,
-          slug: state.draft.slug,
-          content: state.draft.content,
-          tags: state.draft.tags,
-          status: 'draft',
+      // posts.create 是 NestJS 服务调用（非 LangChain tool），CallbackHandler 不会自动捕获，
+      // 这里手动包一个 OTel span 挂到当前 trace 下，保证副作用可见。
+      const { startActiveObservation } = await import('@langfuse/tracing');
+      const post = await startActiveObservation(
+        `tool:${AGENT_ACTION_TYPE.CREATE_POST_DRAFT}`,
+        async () => {
+          return this.posts.create(
+            {
+              title: state.draft!.title,
+              slug: state.draft!.slug,
+              content: state.draft!.content,
+              tags: state.draft!.tags,
+              status: 'draft',
+            },
+            state.userId,
+          );
         },
-        state.userId,
+        { asType: 'tool', endOnExit: true },
       );
 
       await this.approval.markExecuted(BigInt(state.runId), {
@@ -525,6 +572,8 @@ export class AgentGraphService implements OnModuleDestroy {
         `记录运行失败状态失败: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
+
+    this.langfuse.releaseTrace(threadId);
   }
 
   onModuleDestroy(): void {

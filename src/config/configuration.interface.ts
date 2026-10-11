@@ -110,6 +110,15 @@ export interface QwenConfig {
   model?: string;
 }
 
+export interface LangfuseConfig {
+  /** Langfuse Secret Key，为空则禁用全链路观测（不影响启动） */
+  secretKey?: string;
+  /** Langfuse Public Key */
+  publicKey?: string;
+  /** Langfuse 服务地址，默认 https://cloud.langfuse.com */
+  baseUrl?: string;
+}
+
 export interface LoggerConfig {
   /** 日志级别：trace < debug < info < warn < error < fatal */
   level?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal' | 'silent';
@@ -149,6 +158,7 @@ export interface AppConfig {
   s3?: S3Config;
   logger?: LoggerConfig;
   qwen?: QwenConfig;
+  langfuse?: LangfuseConfig;
 }
 
 export type AppConfigForced = {
