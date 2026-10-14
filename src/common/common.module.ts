@@ -13,7 +13,6 @@ import { UserContextInterceptor } from './interceptors/user-context.interceptor'
 import { TimeoutInterceptor } from './interceptors/timeout.interceptor';
 import { GlobalExceptionsFilter } from './filters/global-exception.filter';
 import cookieParser from 'cookie-parser';
-import { RequestContextMiddleware } from './middleware/request-context.middleware';
 import { CacheHeaderInterceptor } from './interceptors/cache-header.interceptor';
 import { RequestIdMiddleware } from './middleware/request-id.middleware';
 
@@ -44,10 +43,8 @@ import { RequestIdMiddleware } from './middleware/request-id.middleware';
 })
 export class CommonModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    // 请求上下文（CLS）必须【最先】挂——它在最外层 .run(store, next) 开上下文，
-    // 后续所有中间件 / controller / service / 拦截器都在这个 store 里，X-Cache 状态才传得出去。
-    consumer.apply(RequestContextMiddleware).forRoutes('*');
-
+    // 请求上下文（CLS）由 ContextModule（ADR-005）以 ClsMiddleware 在 AppModule 最前挂载，
+    // 早于本模块的中间件；这里只保留需要在本模块注册的 cookieParser 与 requestId 中间件。
     // 健康探针的自动访问日志由 logger.module.ts 的 autoLogging 统一过滤
     consumer.apply(cookieParser(), RequestIdMiddleware).forRoutes('*');
   }

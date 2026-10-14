@@ -22,7 +22,7 @@ import { ApiExceptionEnvelope } from '@/common/decorators/api-envelope.decorator
 import { Public, UserInfo } from '@/common/decorators/jwt-auth.decorator';
 import { SkipTimeout } from '@/common/decorators/skip-timeout.decorator';
 import { ParseSnowflakePipe } from '@/common/pipes/parse-snowflake.pipe';
-import { useRequestUser } from '@/common/context/user-context';
+import { RequestContextService } from '@/common/context/request-context.service';
 import {
   ErrorException,
   ErrorExceptionCode,
@@ -71,6 +71,7 @@ export class AgentController {
   constructor(
     private readonly agentService: AgentService,
     private readonly agentEvents: AgentEventsService,
+    private readonly requestContext: RequestContextService,
   ) {}
 
   @Post('runs')
@@ -212,7 +213,7 @@ export class AgentController {
     // ── 1. 鉴权快照（SSE 头发送前，异常可直接返回 HTTP 错误）──
     let snapshot: IAgentRunView;
     try {
-      const currentUser = useRequestUser();
+      const currentUser = this.requestContext.requireUser();
       snapshot = await this.agentService.getRun(idBigInt, currentUser.id);
     } catch (error) {
       teardown();

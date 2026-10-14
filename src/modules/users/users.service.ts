@@ -1,4 +1,4 @@
-import { isRequestUser, useRequestUser } from '@/common/context/user-context';
+import { RequestContextService } from '@/common/context/request-context.service';
 import { SpecialRolesEnum } from '@/common/decorators/special-roles.decorator';
 import {
   ErrorException,
@@ -123,6 +123,7 @@ export class UsersService {
     private readonly permissionsService: PermissionsService,
     private readonly configService: ConfigService,
     private readonly cacheService: CacheService,
+    private readonly requestContext: RequestContextService,
   ) {
     this.defaultAdminUsername = this.configService.getOrThrow<string>(
       'DEFAULT_ADMIN_USERNAME',
@@ -194,7 +195,7 @@ export class UsersService {
   }
 
   async getProfile(): Promise<UserWithFlatRoles> {
-    const id = useRequestUser().id;
+    const id = this.requestContext.requireUser().id;
 
     const user = await this.prisma.user.findFirst({
       where: { id, deletedAt: null },
@@ -209,7 +210,7 @@ export class UsersService {
   }
 
   async getPermissions(): Promise<Permission[]> {
-    const id = useRequestUser().id;
+    const id = this.requestContext.requireUser().id;
 
     // 单次嵌套 filter：Permission → rolePermissions → role → users 反向过滤到当前用户，
     // 替代旧 TypeORM 版 `where: { roles: { id: In(...) } }` 与本服务旧版「先查 roles 再查 permissions」两段式，
@@ -311,7 +312,7 @@ export class UsersService {
   }
 
   updateProfile(updateProfileDto: UpdateUserDto) {
-    const userId = useRequestUser().id;
+    const userId = this.requestContext.requireUser().id;
     return this.update(userId, updateProfileDto);
   }
 
@@ -347,10 +348,10 @@ export class UsersService {
     //    - 注意：真正的 USER_UPDATE 权限已在 Controller 层由 @Permission(USER_UPDATE) 拦截，
     //      这里是"兜底式"纵深防御，防止内部绕过（如消息队列、内部 RPC 调用）。
     // ------------------------------------------------------------------
-    const isSelf = isRequestUser(id.toString());
+    const isSelf = this.requestContext.isRequestUser(id.toString());
     if (!isSelf) {
       try {
-        const operator = useRequestUser();
+        const operator = this.requestContext.requireUser();
         const opSpecialRoles = operator.specialRoles;
         if (
           opSpecialRoles !== SpecialRolesEnum.SuperAdmin &&
@@ -360,7 +361,7 @@ export class UsersService {
         }
       } catch (e) {
         if (e instanceof ErrorException) throw e;
-        // useRequestUser() 抛 Error（非请求上下文，如测试/任务），放行
+        // requireUser() 抛 Error（非请求上下文，如测试/任务），放行
       }
     }
 
@@ -468,7 +469,7 @@ export class UsersService {
       if (normalizedUsername !== undefined && !isDefaultAdmin)
         changed.push('username');
       try {
-        const operator = useRequestUser();
+        const operator = this.requestContext.requireUser();
         this.logger.log(
           `User updated: id=${id}, fields=[${changed.join(',')}], operator=${operator.id}`,
         );
@@ -512,7 +513,7 @@ export class UsersService {
     { roles }: UpdateUserSpecialRolesDto,
   ): Promise<UserBasePayload> {
     // 不能修改自己的角色，除非是默认超级管理员
-    const isSelf = isRequestUser(id.toString());
+    const isSelf = this.requestContext.isRequestUser(id.toString());
 
     const user = await this.prisma.user.findFirst({
       where: { id, deletedAt: null },
@@ -529,7 +530,7 @@ export class UsersService {
 
     // 审计：特殊角色变更属于高敏感操作，记录日志
     try {
-      const operator = useRequestUser();
+      const operator = this.requestContext.requireUser();
       this.logger.log(
         `User special roles updated: id=${id}, roles=${roles.join(',')}, operator=${operator.id}`,
       );
@@ -614,8 +615,8 @@ export class UsersService {
   }
 
   async updatePassword({ oldPassword, newPassword }: UpdatePasswordDto) {
-    // useRequestUser().id 是 Prisma.User.id → bigint
-    const prismaId = useRequestUser().id;
+    // requireUser().id 是 Prisma.User.id → bigint
+    const prismaId = this.requestContext.requireUser().id;
 
     const user = await this.prisma.user.findFirst({
       where: { id: prismaId, deletedAt: null },
@@ -685,12 +686,12 @@ export class UsersService {
       }
 
       // 操作人审计：项目无 AuditLog 服务，用 Logger 记录最小轨迹。
-      // useRequestUser() 仅在请求生命周期内可用；非请求上下文（如定时任务）
+      // requireUser() 仅在请求生命周期内可用；非请求上下文（如定时任务）
       // 降级仍记目标信息，保证至少有「发生了密码重置」的可追溯线索。
       // 写法与 remove 对齐，便于跨模块统一检索。
       // 不记 newPassword / hashedPassword——敏感数据不进日志，符合 OWASP 日志纪律。
       try {
-        const operator = useRequestUser();
+        const operator = this.requestContext.requireUser();
         this.logger.log(
           `User password reset by admin: targetId=${id}, operator=${operator.id}`,
         );
@@ -704,7 +705,7 @@ export class UsersService {
 
   async remove(id: bigint): Promise<{ success: true }> {
     // P0：禁止删除当前登录用户——管理员手滑点了自己不至于立即登出。
-    if (isRequestUser(id.toString())) {
+    if (this.requestContext.isRequestUser(id.toString())) {
       throw new ErrorException(ErrorExceptionCode.CANNOT_DELETE_SELF);
     }
 
@@ -751,11 +752,11 @@ export class UsersService {
       // 仅数据膨胀，无数据泄露。
 
       // 操作人审计：项目无 AuditLog 服务，用 Logger 记录最小轨迹。
-      // useRequestUser() 仅在请求生命周期内可用；非请求上下文（如定时任务）
+      // requireUser() 仅在请求生命周期内可用；非请求上下文（如定时任务）
       // 降级仍记目标信息，保证至少有「发生了删除」的可追溯线索。
       // 写法与 roles.service.remove 对齐，便于跨模块统一检索。
       try {
-        const operator = useRequestUser();
+        const operator = this.requestContext.requireUser();
         this.logger.log(`User removed: id=${id}, operator=${operator.id}`);
       } catch {
         this.logger.log(`User removed: id=${id}`);

@@ -39,7 +39,7 @@
 - 已登录接口更偏向按用户限流
 - 公开接口更偏向按 IP 限流
 
-`useRequestUser()` 依赖请求上下文拦截器，Guard 阶段不一定总能取到，所以当前实现会回退到 `req.user`。
+`RequestContextService.requireUser()` 依赖请求上下文（CLS，见 ADR-005），WebSocket 上下文取不到用户，所以当前实现会回退到 `req.user`。
 
 ### 3. auth 接口的单独限流
 

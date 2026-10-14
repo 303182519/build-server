@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import type { Post } from './entities/post.entity';
 import { QueryPostDto } from './dto/query-post.dto';
-import { setCacheState } from '@/common/request-context';
+import { RequestContextService } from '@/common/context/request-context.service';
 import {
   ErrorException,
   ErrorExceptionCode,
@@ -55,6 +55,7 @@ export class PostsService {
     @Inject(POSTS_REPOSITORY) private readonly repo: PostsRepository,
     private readonly cache: CacheService,
     private readonly configService: ConfigService,
+    private readonly requestContext: RequestContextService,
 
     @Optional() private readonly trendingService?: TrendingService,
     // 存储 + 图片处理。同样 @Optional()，保持单元测试可裸构造；运行时由全局 StorageModule 注入。
@@ -73,7 +74,7 @@ export class PostsService {
     // Redis 未配置或处于掉线冷却期：绕过缓存直连库，业务不中断。
     // isRedisEnabled() 只看 store 类型，感知不到掉线；掉线靠 get/set 异常触发冷却。
     if (!this.cache.isRedisEnabled() || this.isRedisCoolingDown()) {
-      setCacheState('BYPASS');
+      this.requestContext.setCacheState('BYPASS');
       return this.loadList(query);
     }
 
@@ -85,12 +86,12 @@ export class PostsService {
       cached = await this.cache.get<string>(key);
     } catch (err) {
       this.enterRedisCoolDown(`读取缓存失败，降级直连库 key=${key}`, err);
-      setCacheState('BYPASS');
+      this.requestContext.setCacheState('BYPASS');
       return this.loadList(query);
     }
 
     if (cached) {
-      setCacheState('HIT', key);
+      this.requestContext.setCacheState('HIT', key);
       return this.deserializeList(cached);
     }
 
@@ -104,10 +105,10 @@ export class PostsService {
         JSON.stringify(result),
         this.jitteredTtl(this.listTtl),
       );
-      setCacheState('MISS', key);
+      this.requestContext.setCacheState('MISS', key);
     } catch (err) {
       this.enterRedisCoolDown(`回填缓存失败，跳过缓存 key=${key}`, err);
-      setCacheState('BYPASS');
+      this.requestContext.setCacheState('BYPASS');
     }
 
     return result;
@@ -137,7 +138,7 @@ export class PostsService {
   async findOne(id: string): Promise<Post> {
     // Redis 未配置或处于掉线冷却期：绕过缓存直连库
     if (!this.cache.isRedisEnabled() || this.isRedisCoolingDown()) {
-      setCacheState('BYPASS');
+      this.requestContext.setCacheState('BYPASS');
       return this.loadById(id);
     }
 
@@ -148,12 +149,12 @@ export class PostsService {
       cached = await this.cache.get<string>(key);
     } catch (err) {
       this.enterRedisCoolDown(`读取单篇缓存失败 key=${key}`, err);
-      setCacheState('BYPASS');
+      this.requestContext.setCacheState('BYPASS');
       return this.loadById(id);
     }
 
     if (cached) {
-      setCacheState('HIT', key);
+      this.requestContext.setCacheState('HIT', key);
       return this.revivePost(JSON.parse(cached) as Post);
     }
 
@@ -165,10 +166,10 @@ export class PostsService {
         JSON.stringify(post),
         this.jitteredTtl(this.listTtl),
       );
-      setCacheState('MISS', key);
+      this.requestContext.setCacheState('MISS', key);
     } catch (err) {
       this.enterRedisCoolDown(`回填单篇缓存失败 key=${key}`, err);
-      setCacheState('BYPASS');
+      this.requestContext.setCacheState('BYPASS');
     }
 
     return post;

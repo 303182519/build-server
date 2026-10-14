@@ -1,3 +1,4 @@
+import { RequestContextService } from '@/common/context/request-context.service';
 import {
   CallHandler,
   ExecutionContext,
@@ -6,7 +7,6 @@ import {
 } from '@nestjs/common';
 import { Response } from 'express';
 import { Observable, tap } from 'rxjs';
-import { getRequestContext } from '../request-context';
 
 /**
  * 把请求上下文里的缓存命中状态，写成 X-Cache / X-Cache-Key 响应头。
@@ -20,11 +20,13 @@ import { getRequestContext } from '../request-context';
  */
 @Injectable()
 export class CacheHeaderInterceptor implements NestInterceptor {
+  constructor(private readonly requestContext: RequestContextService) {}
+
   intercept(ctx: ExecutionContext, next: CallHandler): Observable<unknown> {
     const res = ctx.switchToHttp().getResponse<Response>();
     return next.handle().pipe(
       tap(() => {
-        const { cache, cacheKey } = getRequestContext();
+        const { cache } = this.requestContext.getCacheState();
         if (cache) {
           res.setHeader('X-Cache', cache);
           // if (cacheKey) res.setHeader('X-Cache-Key', cacheKey);

@@ -6,7 +6,7 @@ import { stdSerializers, type DestinationStream } from 'pino';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { getLoggerConfig } from '../../config/configuration';
 import { IsDev } from '../../common/constants/environment';
-import { getRequestContext } from '../../common/request-context';
+import { RequestContextService } from '../../common/context/request-context.service';
 import { resolveRequestId } from '../../common/request-id';
 import { sanitizeUrl } from './log-sanitizer';
 
@@ -93,8 +93,11 @@ function isEventStreamResponse(res: ServerResponse): boolean {
 @Module({
   imports: [
     PinoLoggerModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService): Params => {
+      inject: [ConfigService, RequestContextService],
+      useFactory: (
+        configService: ConfigService,
+        requestContext: RequestContextService,
+      ): Params => {
         const loggerConfig = getLoggerConfig(configService);
 
         const wantConsole = loggerConfig.output === 'console';
@@ -241,9 +244,9 @@ function isEventStreamResponse(res: ServerResponse): boolean {
             reqId: 'requestId',
           },
           // 【为什么必须开】顶层 requestId 不能只靠下方 mixin 读 CLS：
-          // mixin 依赖 AsyncLocalStorage，而 store 只存在于 RequestContextMiddleware 的
-          // run() 派生链里。长连接 / 手动 @Res() 的响应（SSE 事件流、文件下载）往往是在
-          // socket close 回调或 Redis Pub/Sub 回调里执行 res.end()，此时已脱离请求链，
+          // mixin 依赖 AsyncLocalStorage，而 store 只存在于 ClsMiddleware（ContextModule，
+          // ADR-005）的 run() 派生链里。长连接 / 手动 @Res() 的响应（SSE 事件流、文件下载）
+          // 往往是在 socket close 回调或 Redis Pub/Sub 回调里执行 res.end()，此时已脱离请求链，
           // mixin 读不到 store → 访问日志丢失顶层 requestId（踩坑案例：GET /api/jobs/:id/events）。
           // pino-http 则在请求进入时就把 requestId 作为 child binding 绑在请求级 logger 上
           // （`req.id = req.id || genReqId(...)` 之后 `logger.child({ [reqIdKey]: req.id })`），
@@ -297,7 +300,10 @@ function isEventStreamResponse(res: ServerResponse): boolean {
         // 产出一条重复日志（见 ADR-002）。
         if (loggerConfig.includeContext) {
           pinoHttp.mixin = () => {
-            const { requestId, bizCode } = getRequestContext();
+            // 读请求上下文门面（ADR-005）。无上下文时 getRequestId/getBizCode 返回 undefined，
+            // 不会抛错——因此定时任务 / 队列等非请求链路可安全调用。
+            const requestId = requestContext.getRequestId();
+            const bizCode = requestContext.getBizCode();
             const props: Record<string, string> = {};
             if (requestId) props.requestId = requestId;
             if (bizCode) props.bizCode = bizCode;

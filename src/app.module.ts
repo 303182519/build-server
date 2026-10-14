@@ -9,6 +9,7 @@ import { ThrottlerConfigModule } from './shared/throttler/throttler.module';
 import { StaticModule } from './shared/static/static.module';
 import { StorageModule } from './shared/storage/storage.module';
 import { HealthModule } from './shared/health/health.module';
+import { ContextModule } from './common/context/context.module';
 import { CommonModule } from './common/common.module';
 // import { PostsModule } from './modules/posts/posts.module';
 import { JobsModule } from './shared/jobs/jobs.module';
@@ -17,6 +18,9 @@ import { LoggerModule } from './shared/logger/logger.module';
 import { modules } from './modules';
 @Module({
   imports: [
+    // ContextModule 必须排在最前：它在最外层建立 CLS（ADR-005），
+    // 后续 RequestIdMiddleware / pino-http 才能往上下文里写 requestId。
+    ContextModule,
     AppConfigModule,
     CommonModule,
     LoggerModule,

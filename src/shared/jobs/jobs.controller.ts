@@ -36,7 +36,7 @@ import {
 } from './types/job.types';
 import { SkipTimeout } from '@/common/decorators/skip-timeout.decorator';
 import { ParseSnowflakePipe } from '@/common/pipes/parse-snowflake.pipe';
-import { useRequestUser } from '@/common/context/user-context';
+import { RequestContextService } from '@/common/context/request-context.service';
 
 // 路径参数 :id 的 API 参数装饰器
 const idParam = ApiParam({
@@ -71,6 +71,7 @@ export class JobsController {
   constructor(
     private readonly jobService: JobService,
     private readonly jobEvents: JobEventsService,
+    private readonly requestContext: RequestContextService,
   ) {}
 
   @Get()
@@ -279,7 +280,7 @@ export class JobsController {
    */
   private async loadAuthorizedSnapshot(id: string): Promise<IJobRunView> {
     const snapshot = await this.jobService.getById(id);
-    const currentUser = useRequestUser();
+    const currentUser = this.requestContext.requireUser();
 
     if (
       !snapshot.createdBy ||

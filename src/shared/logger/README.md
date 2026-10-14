@@ -121,7 +121,7 @@ export class UserService {
 > ⚠️ 不要关闭 `pinoHttp.quietReqLogger`，也不要删掉 `customAttributeKeys.reqId`：这两个配置
 > 共同决定「访问日志的顶层 `requestId`」。关掉后访问日志会退回「只能靠 CLS mixin 注入」，
 > 而 CLS 在长连接 / 手动 `@Res()` 的响应上必然丢失（此时的 `res.end()` 由 socket `close` 回调
-> 或 Redis Pub/Sub 回调触发，已脱离 `RequestContextMiddleware` 的 `run()` 链），
+> 或 Redis Pub/Sub 回调触发，已脱离 `ClsMiddleware`（ContextModule，ADR-005）的 `run()` 链），
 > 表现为访问日志**时有时无** `requestId`（曾真实发生：`GET /api/jobs/:id/events`）。
 
 > ⚠️ requestId / bizCode 只有**顶层**这一条字段路径，不要在日志里再输出
@@ -324,7 +324,7 @@ pnpm start:dev
 长连接的访问日志**时有时无**，且该条日志同时缺 `bizCode`。
 
 **根因**：`requestId` 若只由 pino `mixin` 从 CLS 注入，就会受 AsyncLocalStorage 的边界限制 ——
-store 只在 `RequestContextMiddleware` 的 `run()` 派生链里存在。这类响应的 `res.end()` 通常由
+store 只在 `ClsMiddleware`（ContextModule，ADR-005）的 `run()` 派生链里存在。这类响应的 `res.end()` 通常由
 **socket `close` 回调**（客户端断开）或 **Redis Pub/Sub 回调**（任务事件到达）触发，二者都在
 root 上下文，`res.emit('finish')` 时 mixin 取不到 store → 该条日志没有 `requestId`。
 只有「controller 内同步结束」（例如连接时任务已是终态）的请求才带得上。

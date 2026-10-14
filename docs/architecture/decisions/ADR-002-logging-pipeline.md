@@ -57,6 +57,10 @@
      pino-http 无从得知。
    `mixin` 同时注入同值 `requestId` 作为兜底（兼容「手动开 CLS 写 requestId」的非 HTTP 场景），
    两侧共用 `resolveRequestId()`，取值必然一致。
+   > 注：CLS 的**建立机制**已由 ADR-005 替代（手写 `RequestContextMiddleware` → nestjs-cls
+   > `ClsMiddleware`）。`requestId` / `bizCode` 的**权威口径与注入通道不变**（仍由 pino-http
+   > 请求级绑定 + `mixin` 承载），本 ADR 的字段契约与去重规则继续有效。读取 CLS 的入口统一为
+   > `RequestContextService` 门面。
 8. **日志归属与去重**：HTTP 维度（`request.method` / `request.url` / `response.statusCode` /
    `responseTime`）只由访问日志承载；`GlobalExceptionsFilter` 只把业务码写进 CLS（由 mixin
    注入访问日志），**不再单独产出 4xx 日志**；仅 5xx 额外产出一条 error 日志承载异常堆栈。
@@ -267,3 +271,12 @@ logrotate / 采集 Agent / 容器日志驱动更符合容器化最佳实践，�
   「SSE / 长连接被标 `[SLOW]`」故障排查条目。
   未做：`responseTime` 对 SSE 的语义区分 —— 它仍是连接时长，采集侧若按该字段建「接口耗时」看板，
   需自行排除 SSE（本文档已声明该字段对 SSE 的含义）。
+- **2026-10-14**：CLS 建立机制改为 nestjs-cls（见 ADR-005）。
+  起因：原手写 `RequestContextMiddleware`（`AsyncLocalStorage.run`）存在隐式执行顺序、两份 ALS
+  实例、不可注入/不可测试等工程债。
+  变更：以 `ContextModule`（`ClsModule.forRoot({ global: true, middleware: { mount: true } })`）
+  的 `ClsMiddleware` 替换手写中间件；新增门面 `RequestContextService` 作为读取 CLS 的统一入口；
+  `logger.module.ts` 的 `mixin` 改经门面读取 `requestId` / `bizCode`。
+  影响：`requestId` / `bizCode` 的权威口径（pino-http 请求级绑定 + `mixin`）**不变**；字段契约与
+  4xx 去重规则**不变**；「长连接 / SSE 丢 CLS」属 AsyncLocalStorage 固有边界，**不因本次迁移改变**
+  （ClsMiddleware 内部同样以 `run()` 包裹 `next()`，语义等价）。

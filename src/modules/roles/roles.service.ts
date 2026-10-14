@@ -10,7 +10,7 @@ import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { RoleCode } from '@/common/constants/roles';
 
-import { useRequestUser } from '@/common/context/user-context';
+import { RequestContextService } from '@/common/context/request-context.service';
 
 // 出口白名单：不暴露 deletedAt（软删除是实现细节）。
 // permissions 通过 rolePermissions 中间表二次拉取后拍平，
@@ -74,7 +74,10 @@ function flattenRolePermissions<T extends RoleWithPermissionsPayload>(
 export class RolesService {
   private readonly logger = new Logger(RolesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly requestContext: RequestContextService,
+  ) {}
 
   async create(createRoleDto: CreateRoleDto) {
     // 入参去重：避免 ['A','A'] 触发重复 in 查询与语义歧义
@@ -258,7 +261,7 @@ export class RolesService {
 
       // 5. 操作人审计：与 remove 惯例对齐，记录修改轨迹。
       try {
-        const operator = useRequestUser();
+        const operator = this.requestContext.requireUser();
         this.logger.log(
           `Role updated: id=${id}, code=${existing.code}, operator=${operator.id}`,
         );
@@ -334,12 +337,12 @@ export class RolesService {
       }
 
       // 7. 操作人审计：项目无 AuditLog 服务，用 Logger 记录最小轨迹。
-      //    useRequestUser() 仅在请求生命周期内可用；非请求上下文（如定时任务）
+      //    requireUser() 仅在请求生命周期内可用；非请求上下文（如定时任务）
       //    降级仍记角色信息，保证至少有「发生了删除」的可追溯线索。
       //    日志内容覆盖"软删 Role + 物理删 RolePermissions"两件事，
       //    作为步骤 4 物理删的间接审计证据（无外键依赖的替代追溯线索）。
       try {
-        const operator = useRequestUser();
+        const operator = this.requestContext.requireUser();
         this.logger.log(
           `Role removed (soft) + RolePermissions purged: id=${id}, code=${role.code}, operator=${operator.id}`,
         );
