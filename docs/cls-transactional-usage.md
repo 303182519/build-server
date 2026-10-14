@@ -252,11 +252,74 @@ await this.txHost.withTransaction(async () => {
 }); // 外层事务提交：成功的留下，失败的不在
 ```
 
-**注意：SAVEPOINT 不是独立事务**——「主业务回滚了、审计日志也要留住」这类需求不能用
-RequiresNew，需要 `Propagation.NotSupported` 挂起当前事务后独立写（脱离外层事务结算）。
+**注意：SAVEPOINT 不是独立事务**——`RELEASE SAVEPOINT` 只是「拔掉旗子」，整个过程中
+只有外层事务末尾的 COMMIT 才真正落库；外层之后回滚，已 RELEASE 的改动照样消失。
+所以「主业务回滚了、审计日志也要留住」这类需求不能用 RequiresNew（见下方 NotSupported）。
 
-其余级别（`Mandatory` 必须在事务内否则抛错、`Never` 必须不在事务内否则抛错、
-`NotSupported` 挂起当前事务等）同上传入即可。
+### 反例：去掉 RequiresNew，只靠 try/catch 行不行？
+
+不行——一条失败，整批全灭：
+
+```ts
+await this.txHost.withTransaction(async () => {
+  const failed: string[] = [];
+  for (const name of names) {
+    try {
+      // 默认 Required：不开新事务、没有 SAVEPOINT，直接并入外层事务 T
+      await this.txHost.withTransaction(async () => {
+        await this.txHost.tx.tag.create({ ... }); // 撞唯一键抛 P2002
+      }); // ★ 此刻 T 已被 Prisma 判死刑
+    } catch {
+      failed.push(name); // catch 接得住 JS 异常，救不活事务 T
+    }
+  }
+  // 后续每轮 create 都在「已死」的 T 上执行 → 继续抛错 → 全部进 failed
+  return { failed };
+}); // 外层也无法正常提交：前面成功的同样陪葬，整批报废
+```
+
+原因：Prisma 的交互式事务**不允许「带伤继续」**——任何一条 query 抛错，整条事务就被
+它回滚，之后在这条 tx 上的所有 query 都会报错。InnoDB 本身支持语句级回滚（单条
+INSERT 失败只撤该语句），但 Prisma 不给你这个机会，这正是适配器要引入
+`sqlFlavor` + SAVEPOINT 的原因。
+
+一句话：**try/catch 决定「JS 流程能不能继续」，SAVEPOINT 决定「事务能不能继续」**——
+批量跳过场景两个都需要，少一个都不行。
+
+### NotSupported：挂起外层，独立结算
+
+「挂起」= 外层事务原地暂停（连接仍被它占用、锁仍持有、未提交的改动悬在半空），
+嵌套块被安排到**另一条数据库连接**上、**不在任何事务里**执行——每条 SQL autocommit，
+执行完即永久落库。块结束后外层恢复执行，之后提交或回滚都与刚才的写入无关：
+
+```ts
+await this.txHost.withTransaction(async () => {
+  const tx = this.txHost.tx;
+  await tx.order.update({ where: { id }, data: { status: 'PAID' } });
+
+  // 挂起外层事务：块内 txHost.tx 回退为基座 PrismaService（非事务客户端）
+  await this.txHost.withTransaction(Propagation.NotSupported, async () => {
+    await this.txHost.tx.auditLog.create({ data: { /* ... */ } }); // 立即独立提交
+  });
+
+  throw new Error('后续步骤失败'); // 外层整体回滚
+});
+// 结果：auditLog 留在库里，order.update 被撤销 —— 各算各的账
+```
+
+NotSupported 的三个坑：
+
+1. **看不到外层未提交的改动**——两条连接两个世界，外层刚 `update` 但没提交的值，
+   块内读到的是旧值；
+2. **块内自己没有回滚保护**——块里有多条写、执行到一半挂了，前面已提交的撤不回来，
+   会留半截数据；
+3. **别去碰外层锁住/未提交的行**——你在等外层放锁，外层在挂起等你结束，
+   自己把自己死锁。
+
+分工：**RequiresNew（SAVEPOINT）要的是「局部可撤销」；NotSupported 要的是
+「彻底脱离外层、独立结算」**。
+
+其余级别（`Mandatory` 必须在事务内否则抛错、`Never` 必须不在事务内否则抛错）同上传入即可。
 
 ## 7. 本项目硬性规则（ADR-006 约束）
 
@@ -299,3 +362,4 @@ A：那是可选的第三种风格（`enableTransactionProxy: true` 才能用）
 | 跨 Service 协作 | 直接调，事务自动随 CLS 传播，不透传 tx |
 | 单条读写、原子自增 | 注入的 `PrismaService`，不进事务 |
 | 批量处理，单条失败要跳过（部分回滚） | `withTransaction(Propagation.RequiresNew, fn)`（SAVEPOINT） |
+| 外层回滚也要留住审计日志等（独立结算） | `withTransaction(Propagation.NotSupported, fn)`（挂起外层，事务外写） |
