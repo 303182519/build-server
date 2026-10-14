@@ -5,6 +5,8 @@ import {
   ErrorExceptionCode,
 } from '@/common/exceptions/error.exception';
 import { PrismaService } from '@/shared/database/prisma/prisma.service';
+import { TransactionHost } from '@nestjs-cls/transactional';
+import { TransactionalAdapterPrisma } from '@nestjs-cls/transactional-adapter-prisma';
 import { CacheService } from '@/shared/caching/cache.service';
 import { CacheKeys } from '@/shared/caching/cache.constants';
 import { generateSnowflakeId } from '@/shared/utils/snowflake';
@@ -119,6 +121,9 @@ export class UsersService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly txHost: TransactionHost<
+      TransactionalAdapterPrisma<PrismaService>
+    >,
     private readonly rolesService: RolesService,
     private readonly permissionsService: PermissionsService,
     private readonly configService: ConfigService,
@@ -572,7 +577,8 @@ export class UsersService {
 
     // 角色完整性校验：与 create 策略对齐——任一 code 找不到即整体失败。
     // 放在事务内：避免校验通过、写入前角色被软删导致不一致。
-    return this.prisma.$transaction(async (tx) => {
+    return this.txHost.withTransaction(async () => {
+      const tx = this.txHost.tx;
       let roleIds: { id: bigint }[] = [];
       if (roles.length > 0) {
         const foundRoles = await tx.role.findMany({
@@ -664,10 +670,10 @@ export class UsersService {
     { newPassword }: UpdatePasswordByAdminDto,
   ) {
     // 哈希在事务外：argon2 是 CPU 密集（timeCost=5 约 50-100ms），
-    // 放进 $transaction 会拉长 DB 连接占用，与 remove 的事务粒度惯例不一致。
+    // 放进事务会拉长 DB 连接占用，与 remove 的事务粒度惯例不一致。
     const hashedPassword = await hash(newPassword, { timeCost: 5 });
 
-    // 包事务：保证「密码重置 + 审计日志」原子性，与 remove 的 $transaction 惯例一致。
+    // 包事务：保证「密码重置 + 审计日志」原子性，与 remove 的 withTransaction 惯例一致。
     // 设计取舍：用 updateMany + count===0 单次原子查询替代旧版 findFirst + update 两段式——
     //   - 消除 TOCTOU 窗口（旧版 findFirst 与 update 之间的并发软删/物理删无保护）
     //   - where 同时带 id 和 deletedAt: null，软删用户 count===0 被正确拦截
@@ -675,7 +681,8 @@ export class UsersService {
     //   - updateMany 对 0 行也成功，无需 try/catch P2025
     //     （与同文件 refreshToken.updateMany 的 0 行处理惯例一致）
     //   - 不区分「id 不存在」与「已被软删」——两者对调用方等价，避免信息泄露。
-    return this.prisma.$transaction(async (tx) => {
+    return this.txHost.withTransaction(async () => {
+      const tx = this.txHost.tx;
       const result = await tx.user.updateMany({
         where: { id, deletedAt: null },
         data: { password: hashedPassword },
@@ -709,13 +716,14 @@ export class UsersService {
       throw new ErrorException(ErrorExceptionCode.CANNOT_DELETE_SELF);
     }
 
-    // 包事务：保证「软删 + 审计」原子性，与 roles.service.remove 的 $transaction 惯例一致。
+    // 包事务：保证「软删 + 审计」原子性，与 roles.service.remove 的 withTransaction 惯例一致。
     // 设计取舍：放行 SuperAdmin 用户删除——上层 controller 用 @Permission(USER_DELETE)
     // 守卫，已限制只有持权限者可调用，service 层不再二次拦截角色。
     // 风险：失去「最后一名 SuperAdmin」保护，若系统最后一个超管被删，需要 SuperAdmin
     // 的路由（如 updateSpecialRoles）将无人可调用。生产建议在 controller 或单独的
     // LastSuperAdminGuard 中做计数兜底，而不是混入业务事务。
-    return this.prisma.$transaction(async (tx) => {
+    return this.txHost.withTransaction(async () => {
+      const tx = this.txHost.tx;
       try {
         // 条件 UPDATE：deletedAt IS NULL，UPDATE 不匹配即抛 P2025。
         // P2025 必然意味着"id 不存在"或"已被并发软删"，不再有「角色被并发改」第三种可能，

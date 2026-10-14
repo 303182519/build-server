@@ -1,4 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import { TransactionHost } from '@nestjs-cls/transactional';
+import { TransactionalAdapterPrisma } from '@nestjs-cls/transactional-adapter-prisma';
 import { PrismaService } from '@/shared/database/prisma/prisma.service';
 import {
   Prisma,
@@ -30,7 +32,14 @@ import { generateSnowflakeId } from '@/shared/utils/snowflake';
  */
 @Injectable()
 export class PrismaPostsRepository implements PostsRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // ADR-006：事务统一走 txHost（withTransaction 开事务、tx 取当前事务客户端）；
+    // this.prisma 仅保留给无事务场景（单条读写、$executeRaw 原子自增）。
+    private readonly txHost: TransactionHost<
+      TransactionalAdapterPrisma<PrismaService>
+    >,
+  ) {}
 
   // 列表查询统一 select：显式列出出口字段 + 通过 postTags 关联拉取标签名。
   // 抽成常量保证每个出口形状一致；satisfies 校验符合 Prisma.PostSelect。
@@ -118,18 +127,21 @@ export class PrismaPostsRepository implements PostsRepository {
     const where = this.baseWhere(query);
 
     // 不保证 total 和当页"同一时刻"；
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.post.findMany({
-        where,
-        select: PrismaPostsRepository.postSelect,
-        // sortBy 已在 QueryPostDto 白名单校验过，动态拼 key 是安全的。
-        // 追加 id 作为稳定次级排序键：主排序键相等时避免分页漂移 / 漏行 / 重复行。
-        orderBy: [{ [sortBy]: order }, { id: 'asc' }],
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.post.count({ where }),
-    ]);
+    // withTransaction：findMany 与 count 进同一事务快照（原 $transaction 数组形式等价语义）。
+    const [rows, total] = await this.txHost.withTransaction(() =>
+      Promise.all([
+        this.txHost.tx.post.findMany({
+          where,
+          select: PrismaPostsRepository.postSelect,
+          // sortBy 已在 QueryPostDto 白名单校验过，动态拼 key 是安全的。
+          // 追加 id 作为稳定次级排序键：主排序键相等时避免分页漂移 / 漏行 / 重复行。
+          orderBy: [{ [sortBy]: order }, { id: 'asc' }],
+          skip: (page - 1) * limit,
+          take: limit,
+        }),
+        this.txHost.tx.post.count({ where }),
+      ]),
+    );
 
     return { items: rows.map((r) => this.toDomain(r)), total };
   }
@@ -284,7 +296,9 @@ export class PrismaPostsRepository implements PostsRepository {
     expectedVersion?: number,
   ): Promise<Post | null> {
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      return await this.txHost.withTransaction(async () => {
+        // 当前事务客户端：回调内所有读写都走它（ADR-006）。
+        const tx = this.txHost.tx;
         // 两分支统一用 postSelect 出口形状（含 postTags 关联），和 toDomain 入参一致
         let row: Prisma.PostGetPayload<{
           select: typeof PrismaPostsRepository.postSelect;

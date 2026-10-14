@@ -4,6 +4,8 @@ import {
   ErrorExceptionCode,
 } from '@/common/exceptions/error.exception';
 import { PrismaService } from '@/shared/database/prisma/prisma.service';
+import { TransactionHost } from '@nestjs-cls/transactional';
+import { TransactionalAdapterPrisma } from '@nestjs-cls/transactional-adapter-prisma';
 import { JobRun as PrismaJobRun, Prisma } from '@prisma/client';
 import { generateSnowflakeId } from '@/shared/utils/snowflake';
 import { JobEventsService } from '../events/job-events.service';
@@ -35,6 +37,9 @@ export class JobRecordService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly txHost: TransactionHost<
+      TransactionalAdapterPrisma<PrismaService>
+    >,
     private readonly jobEvents: JobEventsService,
   ) {}
 
@@ -296,18 +301,20 @@ export class JobRecordService {
     if (query.name) where.name = query.name;
     if (query.status) where.status = query.status;
 
-    // $transaction 数组形式：findMany 与 count 同一事务快照，保证 total 与当页数据口径一致。
-    const [list, total] = await this.prisma.$transaction([
-      this.prisma.jobRun.findMany({
-        where,
-        // 追加 id 作稳定次级排序键：createdAt 毫秒精度下同值时避免分页漂移 / 漏行 / 重复行；
-        // 雪花 ID 单调递增，desc 与 createdAt 降序方向一致。
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-      }),
-      this.prisma.jobRun.count({ where }),
-    ]);
+    // withTransaction：findMany 与 count 同一事务快照，保证 total 与当页数据口径一致。
+    const [list, total] = await this.txHost.withTransaction(() =>
+      Promise.all([
+        this.txHost.tx.jobRun.findMany({
+          where,
+          // 追加 id 作稳定次级排序键：createdAt 毫秒精度下同值时避免分页漂移 / 漏行 / 重复行；
+          // 雪花 ID 单调递增，desc 与 createdAt 降序方向一致。
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+        }),
+        this.txHost.tx.jobRun.count({ where }),
+      ]),
+    );
 
     return {
       list: list.map((item) => this.toDomain(item)),

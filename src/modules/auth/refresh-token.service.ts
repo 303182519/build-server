@@ -6,10 +6,12 @@ import { getConfig } from '@/config/configuration';
 import { hashCacheToken } from '@/shared/caching/cache.constants';
 import { PrismaService } from '@/shared/database/prisma/prisma.service';
 import { generateSnowflakeId } from '@/shared/utils/snowflake';
-import { Prisma, User } from '@prisma/client';
+import { User } from '@prisma/client';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { TransactionHost } from '@nestjs-cls/transactional';
+import { TransactionalAdapterPrisma } from '@nestjs-cls/transactional-adapter-prisma';
 import { JwtPayload } from './strategies/jwt-auth.strategy';
 import { randomBytes } from 'crypto';
 
@@ -19,10 +21,14 @@ export class RefreshTokenService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly txHost: TransactionHost<
+      TransactionalAdapterPrisma<PrismaService>
+    >,
   ) {}
 
-  // client 可传入事务句柄 tx：rotate 把"作废旧的 + 写新的"放进同一事务时需要
-  async issue(user: User, client: Prisma.TransactionClient = this.prisma) {
+  // ADR-006：不再透传事务句柄——txHost.tx 在事务内（如 rotate）自动命中当前事务客户端，
+  // 事务外（login / register 直调）回退为基座 PrismaService，两种场景语义与旧版一致。
+  async issue(user: User) {
     const payload: JwtPayload = {
       sub: user.id.toString(),
     };
@@ -34,7 +40,7 @@ export class RefreshTokenService {
     const refreshToken = randomBytes(32).toString('base64url');
     const accessExpiresAt = Date.now() + jwt.accessExpiresIn * 1000;
     const refreshExpiresAt = new Date(Date.now() + jwt.refreshExpiresIn * 1000);
-    await client.refreshToken.create({
+    await this.txHost.tx.refreshToken.create({
       data: {
         id: BigInt(generateSnowflakeId()),
         tokenHash: hashCacheToken(refreshToken),
@@ -52,7 +58,7 @@ export class RefreshTokenService {
   }
   /**
    * 用 refresh 换新 token：校验 → 作废旧的 → 发新的，**整个放进一个事务**。
-   * 为什么要事务（对照 posts update 的 $transaction）：
+   * 为什么要事务（对照 posts update 的 withTransaction）：
    *  - 原子性：若发新 token 失败，作废也回滚，用户不会被"凭空登出"。
    *  - 防并发重放：两个请求拿同一个 refresh 并发刷新时，靠"条件作废 + 命中行数"
    *    保证只有一个成功（另一个被行锁挡住后看到已 revoked → 0 行 → 拒绝）。
@@ -62,7 +68,8 @@ export class RefreshTokenService {
       throw new ErrorException(ErrorExceptionCode.INVALID_REFRESH_TOKEN);
     }
     const hash = hashCacheToken(rawRefresh);
-    return this.prisma.$transaction(async (tx) => {
+    return this.txHost.withTransaction(async () => {
+      const tx = this.txHost.tx;
       const record = await tx.refreshToken.findUnique({
         where: { tokenHash: hash },
         include: { user: true },
@@ -77,7 +84,8 @@ export class RefreshTokenService {
       });
       if (revoked.count === 0)
         throw new ErrorException(ErrorExceptionCode.INVALID_REFRESH_TOKEN);
-      return { tokens: await this.issue(record.user, tx) };
+      // issue 内部走 txHost.tx，自动加入当前事务，无需透传 tx
+      return { tokens: await this.issue(record.user) };
     });
   }
   /**

@@ -3,6 +3,8 @@ import {
   ErrorExceptionCode,
 } from '@/common/exceptions/error.exception';
 import { PrismaService } from '@/shared/database/prisma/prisma.service';
+import { TransactionHost } from '@nestjs-cls/transactional';
+import { TransactionalAdapterPrisma } from '@nestjs-cls/transactional-adapter-prisma';
 import { generateSnowflakeId } from '@/shared/utils/snowflake';
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -76,6 +78,9 @@ export class RolesService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly txHost: TransactionHost<
+      TransactionalAdapterPrisma<PrismaService>
+    >,
     private readonly requestContext: RequestContextService,
   ) {}
 
@@ -85,7 +90,8 @@ export class RolesService {
 
     // 包事务：保证「权限完整性校验 + 角色创建」原子性，
     // 防止校验通过后、写入前权限被软删导致中间态不一致。
-    return this.prisma.$transaction(async (tx) => {
+    return this.txHost.withTransaction(async () => {
+      const tx = this.txHost.tx;
       // 权限完整性校验：任一 code 找不到即整体失败，
       // 杜绝 findByCodes 静默丢失导致「用户以为授 3 个权限，实际只落 2 个」。
       let permissions: { id: bigint }[] = [];
@@ -178,7 +184,8 @@ export class RolesService {
   async update(id: bigint, updateRoleDto: UpdateRoleDto) {
     // 包事务：保证「存在性 + 系统角色保护 + 权限完整性校验 + 更新」原子性，
     // 与 create / remove 的 $transaction 惯例一致，防止校验通过后、写入前状态漂移。
-    return this.prisma.$transaction(async (tx) => {
+    return this.txHost.withTransaction(async () => {
+      const tx = this.txHost.tx;
       // 1. 存在性 + 取 code（用于系统角色判定）
       const existing = await tx.role.findFirst({
         where: { id, deletedAt: null },
@@ -278,7 +285,8 @@ export class RolesService {
   async remove(id: bigint) {
     // 包事务：保证「存在性 + 系统角色保护 + 引用完整性 + 软删」原子性，
     // 与 create 的 $transaction 惯例一致，防止校验通过后、写入前状态漂移。
-    return this.prisma.$transaction(async (tx) => {
+    return this.txHost.withTransaction(async () => {
+      const tx = this.txHost.tx;
       // 1. 存在性 + 取 code（用于系统角色判定与返回值追溯）
       const role = await tx.role.findFirst({
         where: { id, deletedAt: null },

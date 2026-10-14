@@ -6,6 +6,8 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { verify } from 'argon2';
 import { PrismaService } from '@/shared/database/prisma/prisma.service';
+import { TransactionHost } from '@nestjs-cls/transactional';
+import { TransactionalAdapterPrisma } from '@nestjs-cls/transactional-adapter-prisma';
 import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -47,6 +49,9 @@ type UserWithRoles = Prisma.UserGetPayload<{
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly txHost: TransactionHost<
+      TransactionalAdapterPrisma<PrismaService>
+    >,
     private readonly usersService: UsersService,
     private readonly refreshTokenService: RefreshTokenService,
     // 账号级登录锁定（防密码爆破）。@Optional：LoginAttemptService 由全局 CacheModule
@@ -189,7 +194,8 @@ export class AuthService {
     username: string,
     ghUser: GithubUser,
   ): Promise<bigint> {
-    return this.prisma.$transaction(async (tx) => {
+    return this.txHost.withTransaction(async () => {
+      const tx = this.txHost.tx;
       const user = await tx.user.create({
         data: {
           id: BigInt(generateSnowflakeId()),
