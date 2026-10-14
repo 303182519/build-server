@@ -14,7 +14,6 @@ import { TimeoutInterceptor } from './interceptors/timeout.interceptor';
 import { GlobalExceptionsFilter } from './filters/global-exception.filter';
 import cookieParser from 'cookie-parser';
 import { CacheHeaderInterceptor } from './interceptors/cache-header.interceptor';
-import { RequestIdMiddleware } from './middleware/request-id.middleware';
 
 // 横切关注点的集中注册点
 // 用 @Global() 是因为下面的 APP_* provider 要在整个应用生效；
@@ -43,9 +42,10 @@ import { RequestIdMiddleware } from './middleware/request-id.middleware';
 })
 export class CommonModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    // 请求上下文（CLS）由 ContextModule（ADR-005）以 ClsMiddleware 在 AppModule 最前挂载，
-    // 早于本模块的中间件；这里只保留需要在本模块注册的 cookieParser 与 requestId 中间件。
+    // 请求上下文（CLS）与 requestId 的生成/落点均由 ContextModule（ADR-005）的
+    // ClsMiddleware 在最前挂载处理（generateId + idGenerator + setup），故此处不再注册
+    // RequestIdMiddleware；仅保留需要在本模块注册的 cookieParser。
     // 健康探针的自动访问日志由 logger.module.ts 的 autoLogging 统一过滤
-    consumer.apply(cookieParser(), RequestIdMiddleware).forRoutes('*');
+    consumer.apply(cookieParser()).forRoutes('*');
   }
 }

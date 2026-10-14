@@ -18,8 +18,8 @@ import { LoggerModule } from './shared/logger/logger.module';
 import { modules } from './modules';
 @Module({
   imports: [
-    // ContextModule 必须排在最前：它在最外层建立 CLS（ADR-005），
-    // 后续 RequestIdMiddleware / pino-http 才能往上下文里写 requestId。
+    // ContextModule 必须排在最前：它在最外层建立 CLS 并生成 requestId（ADR-005），
+    // 后续 pino-http 才能直接复用已写入 req.id 的同一个 requestId。
     ContextModule,
     AppConfigModule,
     CommonModule,

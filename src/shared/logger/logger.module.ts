@@ -192,7 +192,7 @@ function isEventStreamResponse(res: ServerResponse): boolean {
             censor: '[REDACTED]',
           },
           // 复用上游透传的 requestId（网关/调用方），否则生成 UUID。
-          // 与 RequestIdMiddleware 共用同一解析函数：两侧必须落在同一个值上，
+          // 与 ClsMiddleware 的 idGenerator 共用同一解析函数：两侧必须落在同一个值上，
           // 否则「访问日志里的 requestId」与「响应头 / 响应体里的 requestId」会不一致。
           genReqId: (req: IncomingMessage) => resolveRequestId(req),
           // 健康探针不产生访问日志（只关自动日志，保留应用日志的请求上下文）

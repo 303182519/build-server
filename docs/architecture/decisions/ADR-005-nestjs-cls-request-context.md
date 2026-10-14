@@ -50,11 +50,17 @@
    - `getCacheState()` / `getRequestId()` / `getBizCode()` 读操作无上下文时返回空值。
 4. **保留** `UserContextInterceptor`（用户信息在 JWT 守卫后才可用），改造为注入门面后在
    `intercept` 中 `setUser(req.user)`，注册位置（`APP_INTERCEPTOR`）不变。
-5. **保留** `RequestIdMiddleware` 作为 requestId 的单一落点：仅把 `setRequestId(id)` 改为经门面
-   调用，`resolveRequestId()`、`req.id`、响应头逻辑一律不动。**不启用** nestjs-cls 自带 id 生成。
+5. requestId 落点收敛到 `ClsMiddleware` **自身**（本节所谓「方案 B」）：启用 nestjs-cls 自带的
+   `generateId`，`idGenerator` 复用 `resolveRequestId()`，并在 `setup` 里把同一个 id 写回
+   `req.id` / `req.headers['x-request-id']` / 响应头。**删除** `RequestIdMiddleware`——它与
+   `idGenerator` 共用同一解析函数、写回同样的三个落点，属性上完全等价；两者并存只会产生
+   「同一逻辑两处执行」的重复与潜在覆盖。`setup` **不写 user**（中间件早于守卫执行）。
 6. 删除 `src/common/request-context.ts`、`src/common/context/user-context.ts`、
-   `src/common/middleware/request-context.middleware.ts`；全部调用点改为注入式门面。
-7. 依赖版本 `nestjs-cls@^6.3`（`engines.node >=18`、`@nestjs 10-12`，零引擎冲突）。
+   `src/common/middleware/request-context.middleware.ts`、
+   `src/common/middleware/request-id.middleware.ts`；全部调用点改为注入式门面。
+7. 门面 `RequestContextService.getRequestId()` 读 `ClsService.getId()`（即 `generateId` 存入
+   `CLS_ID` 的 id），不在 store 里另设 `requestId` 字符串 key。
+8. 依赖版本 `nestjs-cls@^6.3`（`engines.node >=18`、`@nestjs 10-12`，零引擎冲突）。
 
 **备选方案**
 
@@ -66,11 +72,17 @@
 说明：改动面更小，但仍是全局单例导入、仍不可 mock；且无法提供「门面 provider」这一官方推荐模式。
 与本次「全面 DI 化重写」的目标不符，未选用。
 
-备选方案C：**使用 `ClsInterceptor` 挂载。**
+备选方案C：**保留独立 `RequestIdMiddleware` 处理 requestId（不启用 `generateId`）。**
+说明：改动更小、与既有中间件一致，但会让「请求上下文的建立」与「requestId 的生成」分处两套
+机制（`ClsMiddleware` 建上下文、另一个中间件写 id），且该中间件依赖 `ClsMiddleware` 先执行才能把
+id 写进 CLS——隐式顺序约束无法消除，也无法收敛为单一落点。本次采用方案 B（`generateId` 接管），
+未选用本方案。
+
+备选方案D：**使用 `ClsInterceptor` 挂载。**
 说明：官方兼容矩阵明确 `ClsInterceptor` 下 **Guard 与 ExceptionFilter 不可用**，而本仓库
 恰好需要在这两处访问上下文。直接排除。
 
-备选方案D：**引入 `@nestjs-cls/transactional` 做 Prisma 请求级事务。**
+备选方案E：**引入 `@nestjs-cls/transactional` 做 Prisma 请求级事务。**
 说明：本迁移只聚焦上下文基础设施，不改变数据访问模型；Prisma 请求级事务会扩大事务边界、
 影响连接占用与锁竞争，属独立架构决策，本次不做。
 
@@ -90,7 +102,10 @@
 
 风险
 
-- **中间件顺序（R1）**：若 `ClsMiddleware` 晚于 `RequestIdMiddleware`，`set('requestId')` 落不进 store。
+- **中间件顺序（R1）**：`ClsMiddleware` 必须在最外层最先执行，CLS 上下文才能在后续
+  Guard / Interceptor / Filter / pino-http 中可用。requestId 的**取值**与顺序无关
+  （`ClsMiddleware.idGenerator` 与 pino-http 的 `genReqId` 共用 `resolveRequestId()`，且都把结果
+  写回 `req.id`），故顺序问题只影响「上下文可用性」，不影响「id 一致性」。
   对策：`ContextModule` 置于 `AppModule` 首个 import，并在验证阶段以 e2e 实测响应头 / 响应体 /
   日志中的 `requestId` 一致性；若顺序不可靠，可退回官方「手动挂载」
   （`middleware: { mount: false }` + `consumer.apply(ClsMiddleware)` 置于最前）。
@@ -106,8 +121,9 @@
 - 访问请求上下文一律通过 `RequestContextService` 门面，禁止在业务代码直接注入 `ClsService`
   并硬编码 key；
 - `ContextModule` 必须保持在 `AppModule` 的第一个 import 位置；
-- 不得启用 nestjs-cls 的 id 生成（`generateId`），`requestId` 权威口径仍归 ADR-002；
-- `requestId` 的写入落点保持在 `RequestIdMiddleware`，不新增第二处；
+- requestId 的生成统一由 `ClsMiddleware` 的 `idGenerator` 复用 `resolveRequestId()`，不得另起
+  第二处 id 生成；权威口径（pino-http 请求级绑定）仍归 ADR-002；
+- `requestId` 的写入落点收敛到 `ClsMiddleware` 的 `setup`，不新增第二处；
 - 门面「写」方法在无上下文时静默忽略的降级语义不得移除。
 
 **验证方式**

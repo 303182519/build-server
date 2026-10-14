@@ -105,10 +105,10 @@ export class UserService {
 
 ### 请求上下文（requestId / bizCode）
 
-- 入站请求：`RequestIdMiddleware` 与 pino-http 的 `genReqId` 共用 `src/common/request-id.ts`
-  的 `resolveRequestId()`（优先级：`req.id` → `X-Request-ID` 请求头 → 新生成 UUID），
-  并写回 `req.id`、`req.headers['x-request-id']` 与同名响应头。**两侧共用同一函数是硬要求**：
-  各自生成会得到两个不同的 id，访问日志与响应头 / 响应体就对不上了。
+- 入站请求：`ClsMiddleware`（ContextModule，ADR-005）的 `idGenerator` 与 pino-http 的 `genReqId`
+  共用 `src/common/request-id.ts` 的 `resolveRequestId()`（优先级：`req.id` → `X-Request-ID` 请求头
+  → 新生成 UUID），并写回 `req.id`、`req.headers['x-request-id']` 与同名响应头。
+  **两侧共用同一函数是硬要求**：各自生成会得到两个不同的 id，访问日志与响应头 / 响应体就对不上了。
 - 顶层 `requestId` 由 **pino-http 的请求级绑定**承载（`quietReqLogger: true` +
   `customAttributeKeys.reqId: 'requestId'`）：id 在请求进入时就绑在请求级 logger 上，
   因此**与「谁触发 `res.end()`」无关**，长连接 / 手动 `@Res()` 的响应（SSE、下载）也不会丢。
@@ -335,7 +335,7 @@ root 上下文，`res.emit('finish')` 时 mixin 取不到 store → 该条日志
 > ⚠️ 排查这类问题时先确认上面两个开关还在。**只配 `customAttributeKeys.reqId` 而不开
 > `quietReqLogger` 是无效的**：pino-http 仅在 `quietReqLogger: true` 时才创建那个 child，
 > 默认路径下 `req.id` 只藏在 `request` 序列化对象里，访问日志顶层看不到。
-> 另：`RequestIdMiddleware` 与 `genReqId` 必须共用 `resolveRequestId()`，否则两侧会生成
+> 另：`ClsMiddleware` 的 `idGenerator` 与 `genReqId` 必须共用 `resolveRequestId()`，否则两侧会生成
 > 两个不同的 id（访问日志与响应头 `x-request-id` 对不上）。
 
 ### 脱敏不生效 / 日志里出现明文凭证

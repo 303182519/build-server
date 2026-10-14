@@ -1,26 +1,17 @@
-import {
-  Controller,
-  Get,
-  INestApplication,
-  MiddlewareConsumer,
-  Module,
-  NestModule,
-} from '@nestjs/common';
+import { Controller, Get, INestApplication, Module } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { ContextModule } from '../src/common/context/context.module';
 import { RequestContextService } from '../src/common/context/request-context.service';
-import { RequestIdMiddleware } from '../src/common/middleware/request-id.middleware';
 
 /**
- * 上下文基础设施 e2e 冒烟（ADR-005，风险 R1）。
+ * 上下文基础设施 e2e 冒烟（ADR-005）。
  *
- * 目的：实测 ClsMiddleware（由 ContextModule 挂载）确实**先于** RequestIdMiddleware 执行——
- * 只有顺序正确，`RequestIdMiddleware` 才能把 requestId 写进 CLS。
+ * 目的：实测 ClsMiddleware（由 ContextModule 挂载）能建立 CLS，并在请求最外层完成
+ * requestId 的生成与落点（generateId + idGenerator + setup），使响应头与门面读取值一致。
  *
- * 做法：搭一个最小 Nest 应用（仅 ContextModule + 探针控制器），在应用里 apply 真实的
- * RequestIdMiddleware，控制器从门面读取 requestId。若 ClsMiddleware 晚于它执行，
- * 写入会被静默忽略，控制器将读到 undefined，断言失败。
+ * 做法：搭一个最小 Nest 应用（仅 ContextModule + 探针控制器），控制器从门面读取 requestId。
+ * 若 CLS 未建立或 id 未写入，控制器将读到 undefined，断言失败。
  */
 
 @Controller('probe')
@@ -37,11 +28,7 @@ class ProbeController {
   imports: [ContextModule],
   controllers: [ProbeController],
 })
-class ProbeModule implements NestModule {
-  configure(consumer: MiddlewareConsumer) {
-    consumer.apply(RequestIdMiddleware).forRoutes('*');
-  }
-}
+class ProbeModule {}
 
 describe('请求上下文（e2e）', () => {
   let app: INestApplication;
@@ -59,7 +46,7 @@ describe('请求上下文（e2e）', () => {
     await app.close();
   });
 
-  it('ClsMiddleware 先于 RequestIdMiddleware：CLS 中的 requestId 与响应头一致', async () => {
+  it('ClsMiddleware 建立 CLS 并回显 requestId：响应头与门面读取值一致', async () => {
     const upstream = 'upstream-rid-123';
 
     const res = await request(app.getHttpServer())
@@ -69,7 +56,7 @@ describe('请求上下文（e2e）', () => {
 
     // 响应头回显上游 requestId
     expect(res.headers['x-request-id']).toBe(upstream);
-    // CLS 也能读到此值 —— 证明中间件顺序正确
+    // CLS 也能读到此值 —— 证明上下文已建立且 id 已写入
     expect((res.body as { requestId?: string }).requestId).toBe(upstream);
   });
 });

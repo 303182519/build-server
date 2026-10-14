@@ -13,7 +13,8 @@ import type { AppClsStore, CacheState } from './cls-store';
  * - 「读」在无上下文时返回 undefined（不抛）；
  * - requireUser() 在无用户时抛错（沿用原错误语义，供业务 try/catch 降级）；
  * - 「写」在无上下文时静默忽略（降级哲学不变）；
- * - user 由 UserContextInterceptor 在 JWT 守卫之后写入。
+ * - user 由 UserContextInterceptor 在 JWT 守卫之后写入；
+ * - requestId 由 ClsMiddleware 的 generateId/idGenerator 生成，经 `cls.getId()` 读取。
  */
 @Injectable()
 export class RequestContextService {
@@ -66,15 +67,14 @@ export class RequestContextService {
     if (key) this.cls.set('cacheKey', key);
   }
 
-  /** 读当前请求的 requestId；无上下文时返回 undefined。 */
+  /**
+   * 读当前请求的 requestId；无上下文时返回 undefined。
+   *
+   * requestId 不再单独存进 store 的字符串 key：它由 ClsMiddleware 的
+   * `generateId` + `idGenerator` 生成并存入 CLS_ID，统一用 `cls.getId()` 读取（ADR-005）。
+   */
   getRequestId(): string | undefined {
-    return this.cls.get('requestId');
-  }
-
-  /** 写入当前请求的 requestId（由 RequestIdMiddleware 调用）；无上下文时静默忽略。 */
-  setRequestId(requestId: string): void {
-    if (!this.cls.isActive()) return;
-    this.cls.set('requestId', requestId);
+    return this.cls.isActive() ? this.cls.getId() : undefined;
   }
 
   /** 读当前请求的业务码；无上下文时返回 undefined。 */

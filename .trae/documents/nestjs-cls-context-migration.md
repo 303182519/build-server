@@ -49,11 +49,11 @@
 选用 **middleware 挂载**（而非 guard/interceptor），因为本仓库需要在 **Guard**（限流按用户）与 **Exception Filter**（写 `bizCode`）中访问上下文——只有 middleware 同时满足。`mount:true` 对应替换掉原 `RequestContextMiddleware`。
 
 ### D2. 类型化 store + 应用门面
-- 定义 `AppClsStore extends ClsStore`：`requestId?` / `bizCode?` / `cache?` / `cacheKey?` / `user?: User`；`CacheState` 类型随之迁移。
+- 定义 `AppClsStore extends ClsStore`：`bizCode?` / `cache?` / `cacheKey?` / `user?: User`（`requestId` 不在此另设 key，统一走 `ClsService.getId()`）；`CacheState` 类型随之迁移。
 - 新增可注入门面 `RequestContextService`（包装 `ClsService<AppClsStore>`），暴露与旧函数**语义等价**的方法（见 D4）。这既是「DI 化」的落点，也满足官方推荐的「facade provider」模式，避免 30+ 调用点直接依赖 `ClsService` 的字符串 key。
 
 ### D3. 门面可见性：新增 `@Global()` 的 `ContextModule`
-`CommonModule` 并非 `@Global()`（[common.module.ts:18](file:///e:/project2/build-server/src/common/common.module.ts#L18) 的 `@Global()` 已注释）。为使 `RequestContextService` 可全局注入，新建 `@Global()` 的 `ContextModule`，其 `imports` 放 `ClsModule.forRoot`，并 `providers/exports` 该门面。**`ContextModule` 必须是 `AppModule` 的第一个 import**，以保证 `ClsMiddleware` 早于 pino-http 与其它中间件执行（`RequestIdMiddleware` 写 CLS 依赖此顺序）。
+`CommonModule` 并非 `@Global()`（[common.module.ts:18](file:///e:/project2/build-server/src/common/common.module.ts#L18) 的 `@Global()` 已注释）。为使 `RequestContextService` 可全局注入，新建 `@Global()` 的 `ContextModule`，其 `imports` 放 `ClsModule.forRoot`，并 `providers/exports` 该门面。**`ContextModule` 必须是 `AppModule` 的第一个 import**，以保证 `ClsMiddleware` 最先执行、CLS 上下文在后续 Guard / Filter / pino-http 中可用（id 取值因共用 `resolveRequestId()` 而与顺序无关）。
 
 ### D4. 门面方法（语义与旧实现严格对齐）
 
@@ -65,16 +65,15 @@
 | `setUser(user: User)` | 由用户拦截器调用 | `userContextStorage.run` |
 | `getCacheState(): { cache?; cacheKey? }` | 读缓存状态 | `getRequestContext` |
 | `setCacheState(state, key?)` | 无上下文时静默忽略（降级哲学不变） | `setCacheState` |
-| `setRequestId(id)` | 无上下文时静默忽略 | `setRequestId` |
-| `getRequestId(): string \| undefined` | — | `getRequestContext().requestId` |
+| `getRequestId(): string \| undefined` | 读 `ClsService.getId()`（无上下文返回 undefined） | `getRequestContext().requestId` |
 | `setBizCode(code)` | 无上下文时静默忽略 | `setBizCode` |
 | `getBizCode(): string \| undefined` | — | `getRequestContext().bizCode` |
 
 ### D5. 用户注入时机：保留拦截器（改造为注入式）
 用户信息在 JWT 守卫后才可用，故**保留** `UserContextInterceptor`，改为注入 `RequestContextService`，在 `intercept` 中 `setUser(req.user)` 后 `next.handle()`。注册位置（`APP_INTERCEPTOR`）不变。
 
-### D6. requestId：保留 `RequestIdMiddleware` 作为单一落点
-不动 `resolveRequestId()`（[request-id.ts](file:///e:/project2/build-server/src/common/request-id.ts)）与 `req.id` / 响应头逻辑；仅把 `setRequestId(id)` 改为注入 `RequestContextService` 调用。**不启用** nestjs-cls 自带的 id 生成（避免引入第二个 id 源，破坏 ADR-002 的 `req.id` 权威口径）。删除 `RequestContextMiddleware`。
+### D6. requestId：落点收敛到 `ClsMiddleware`（方案 B）
+启用 nestjs-cls 自带 id 生成（`generateId: true`）+ `idGenerator: (req) => resolveRequestId(req)`，在 `setup` 里把同一个 id 写回 `req.id` / `req.headers['x-request-id']` / 响应头三处。`resolveRequestId()`（[request-id.ts](file:///e:/project2/build-server/src/common/request-id.ts)）与取值优先级（`req.id` → `X-Request-ID` → 新 UUID）**完全不动**；`genReqId` 与 `idGenerator` 共用同一函数，两侧必然同值。因此**删除** `RequestIdMiddleware`（它写回同样的三处、属性等价，并存只会重复/覆盖）。门面 `getRequestId()` 改读 `cls.getId()`，store 不再另设 `requestId` 键。`setup` **不写 user**（中间件早于守卫，`req.user` 尚未填充）。
 
 ### D7. 依赖版本
 首选 `nestjs-cls@^6.3`（`engines.node >=18`，`@nestjs 10-12`），**零引擎冲突**且项目为 CommonJS 构建，v6 足够；备选 `^7.0.1`（需将 `package.json` 的 `engines.node` 上调至 `>=22` 与 Docker 对齐）。安装时以 `pnpm view nestjs-cls versions` 确认确切 6.x/7.x 补丁号。
@@ -87,20 +86,21 @@
 ### 2) 新增文件
 - `src/common/context/cls-store.ts`：`AppClsStore` 接口、`CacheState` 类型。
 - `src/common/context/request-context.service.ts`：`@Injectable()` 门面（D4）。
-- `src/common/context/context.module.ts`：`@Global()` 模块，`imports: [ClsModule.forRoot<AppClsStore>({ global: true, middleware: { mount: true } })]`，`providers/exports: [RequestContextService]`。
+- `src/common/context/context.module.ts`：`@Global()` 模块，`imports: [ClsModule.forRoot<AppClsStore>({ global: true, middleware: { mount: true, generateId: true, idGenerator: (req) => resolveRequestId(req), setup: 写回 req.id / 请求头 / 响应头 } })]`，`providers/exports: [RequestContextService]`。
 - `docs/architecture/decisions/ADR-005-nestjs-cls-request-context.md`：按 ADR-000 模板编写，说明本决策、备选（保留手写实现 / 仅内部替换不 DI 化）、后果与验证。
 
 ### 3) 删除文件
 - `src/common/request-context.ts`
 - `src/common/context/user-context.ts`
 - `src/common/middleware/request-context.middleware.ts`
+- `src/common/middleware/request-id.middleware.ts`（落点收敛到 `ClsMiddleware`，见 D6）
 
 ### 4) 修改文件（上下文基础设施）
 | 文件 | 改动 |
 |---|---|
 | [app.module.ts](file:///e:/project2/build-server/src/app.module.ts) | 首个 import 加入 `ContextModule`（在 `CommonModule`/`LoggerModule` 之前） |
-| [common.module.ts](file:///e:/project2/build-server/src/common/common.module.ts) | 移除 `RequestContextMiddleware` 的 `consumer.apply(...)`；保留 `cookieParser` + `RequestIdMiddleware` |
-| [request-id.middleware.ts](file:///e:/project2/build-server/src/common/middleware/request-id.middleware.ts) | 构造注入 `RequestContextService`，`setRequestId(id)` 改走门面 |
+| [common.module.ts](file:///e:/project2/build-server/src/common/common.module.ts) | 移除 `RequestContextMiddleware` 的 `consumer.apply(...)`；保留 `cookieParser`（不再注册 `RequestIdMiddleware`） |
+| [request-id.middleware.ts](file:///e:/project2/build-server/src/common/middleware/request-id.middleware.ts) | **删除**：requestId 落点收敛到 `ClsMiddleware` 的 `generateId`/`idGenerator`/`setup`（D6） |
 | [user-context.interceptor.ts](file:///e:/project2/build-server/src/common/interceptors/user-context.interceptor.ts) | 构造注入门面，`setUser(req.user)` 替换 `userContextStorage.run` |
 | [cache-header.interceptor.ts](file:///e:/project2/build-server/src/common/interceptors/cache-header.interceptor.ts) | 注入门面，`getCacheState()` 替换 `getRequestContext()` |
 | [global-exception.filter.ts](file:///e:/project2/build-server/src/common/filters/global-exception.filter.ts#L184-L186) | 注入门面，`setBizCode(...)` 替换旧调用 |

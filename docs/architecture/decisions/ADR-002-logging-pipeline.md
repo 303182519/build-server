@@ -77,16 +77,19 @@
     前缀，也不再为 `request` / `response` 这两个顶层键单独生成脱敏 stringifier —— pino 的脱敏
     stringifier 按**顶层键**选取，`*.` 前缀统一由 wildcardFirst stringifier 处理；混用具体前缀与
     通配前缀时二者的优先关系属于实现细节，不应依赖。
-11. **requestId 的生成与注入（长连接必须带 id）**：`RequestIdMiddleware` 与 pino-http 的
+11. **requestId 的生成与注入（长连接必须带 id）**：`ClsMiddleware` 的 `idGenerator` 与 pino-http 的
     `genReqId` 共同调用 `src/common/request-id.ts` 的 `resolveRequestId()`（优先级：
     `req.id` → `X-Request-ID` → 新 UUID），并写回 `req.id` 与 `req.headers['x-request-id']`；
     顶层 `requestId` 由 pino-http 的请求级绑定（`quietReqLogger: true` +
     `customAttributeKeys.reqId: 'requestId'`）承载。
     起因：SSE `GET /api/jobs/:id/events` 的访问日志缺失 `requestId`（且时有时无）——它的
     `res.end()` 由 socket `close` 回调或 Redis Pub/Sub 回调触发，已脱离
-    `RequestContextMiddleware` 的 `run()` 链，只靠 `mixin` 读 CLS 必然取不到 store。
+    `ClsMiddleware` 的 `run()` 链，只靠 `mixin` 读 CLS 必然取不到 store。
     另外，两处各自 `randomUUID()` 会产出**两个不同**的 id（访问日志与响应头 / 响应体对不上），
-    因此必须共用同一解析函数；中间件写回 `req.id` 后，无论两个中间件的执行顺序如何都收敛到同值。
+    因此必须共用同一解析函数；两个入口写回 `req.id` 后，无论执行顺序如何都收敛到同值。
+    > 注（2026-10-14，ADR-005 方案 B）：生成 requestId 的入口已由 `RequestIdMiddleware`
+    > 收敛到 `ClsMiddleware` 的 `idGenerator`（`generateId: true`），该中间件已删除；
+    > `genReqId` 与 `idGenerator` 仍共用 `resolveRequestId()`，上述口径不变。
 12. **慢请求标记不适用于流式响应**：`[SLOW]` 只在 `customSuccessMessage` 中按
     `responseTime > slowRequestThreshold` 追加，而流式响应（SSE）的 `responseTime` 是
     **连接生命周期时长**、不是服务端处理耗时 —— 客户端按设计长期挂着连接，每次结束都必然超阈值，
@@ -274,9 +277,12 @@ logrotate / 采集 Agent / 容器日志驱动更符合容器化最佳实践，�
 - **2026-10-14**：CLS 建立机制改为 nestjs-cls（见 ADR-005）。
   起因：原手写 `RequestContextMiddleware`（`AsyncLocalStorage.run`）存在隐式执行顺序、两份 ALS
   实例、不可注入/不可测试等工程债。
-  变更：以 `ContextModule`（`ClsModule.forRoot({ global: true, middleware: { mount: true } })`）
+  变更：以 `ContextModule`（`ClsModule.forRoot({ global: true, middleware: { mount: true,
+  generateId: true, idGenerator: (req) => resolveRequestId(req), setup: 写回 req.id / 请求头 / 响应头 } })`）
   的 `ClsMiddleware` 替换手写中间件；新增门面 `RequestContextService` 作为读取 CLS 的统一入口；
   `logger.module.ts` 的 `mixin` 改经门面读取 `requestId` / `bizCode`。
+  同时 requestId 的生成入口收敛到 `ClsMiddleware` 的 `idGenerator`，**删除** `RequestIdMiddleware`
+  （二者共用 `resolveRequestId()`，属性等价）。
   影响：`requestId` / `bizCode` 的权威口径（pino-http 请求级绑定 + `mixin`）**不变**；字段契约与
   4xx 去重规则**不变**；「长连接 / SSE 丢 CLS」属 AsyncLocalStorage 固有边界，**不因本次迁移改变**
   （ClsMiddleware 内部同样以 `run()` 包裹 `next()`，语义等价）。

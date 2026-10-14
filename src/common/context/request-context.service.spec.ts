@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { ClsService } from 'nestjs-cls';
+import { CLS_ID, ClsService } from 'nestjs-cls';
 import type { User } from '@prisma/client';
 import { RequestContextService } from './request-context.service';
 import type { AppClsStore } from './cls-store';
@@ -38,7 +38,6 @@ describe('RequestContextService', () => {
     const { service } = createService();
 
     expect(() => service.setUser(fakeUser)).not.toThrow();
-    expect(() => service.setRequestId('rid')).not.toThrow();
     expect(() => service.setBizCode('MMS01')).not.toThrow();
     expect(() => service.setCacheState('HIT', 'key')).not.toThrow();
   });
@@ -55,7 +54,8 @@ describe('RequestContextService', () => {
 
     cls.run(() => {
       service.setUser(fakeUser);
-      service.setRequestId('rid-1');
+      // requestId 由 ClsMiddleware 的 generateId 存入 CLS_ID，这里直接模拟该落点
+      cls.set(CLS_ID, 'rid-1');
       service.setBizCode('MMS01');
       service.setCacheState('MISS', 'k1');
 

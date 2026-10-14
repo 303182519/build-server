@@ -83,7 +83,7 @@ function fallbackBizCode(status: HttpStatus): string {
 
 /**
  * 从 X-Request-Id 请求头中提取链路 ID
- * RequestIdMiddleware 保证每个请求都会携带该头（上游未带时自动生成）
+ * ClsMiddleware（ADR-005）在 setup 里保证每个请求都会携带该头（上游未带时自动生成）
  */
 function resolveRequestId(headers: Request['headers']): string | undefined {
   const value = headers['x-request-id'];

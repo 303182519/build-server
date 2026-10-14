@@ -14,13 +14,10 @@ export type CacheState = 'HIT' | 'MISS' | 'BYPASS';
  * 迁移前这里有两份彼此独立的 AsyncLocalStorage：请求级 store（cache / cacheKey /
  * requestId / bizCode）与用户上下文（User）。迁移后统一为 nestjs-cls 的单一 store，
  * 两类状态共存于同一个请求上下文，故合并声明在此。
+ * 例外：requestId 不在此 store 里另设字符串 key —— 它由 ClsMiddleware 的
+ * generateId/idGenerator 存入 CLS_ID，统一经 `ClsService.getId()` 读取（见 ADR-005）。
  */
 export interface AppClsStore extends ClsStore {
-  /**
-   * 请求级 requestId。
-   * 权威口径仍是 pino-http 的请求级绑定（见 ADR-002），此处仅作深层代码的兜底来源。
-   */
-  requestId?: string;
   /**
    * 请求级业务码。异常过滤器在拒绝 / 失败请求时写入，由 pino mixin 注入访问日志顶层。
    */
